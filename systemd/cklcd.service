@@ -1,0 +1,28 @@
+[Unit]
+Description=CloudKey front-panel status display (cklcd)
+Documentation=https://github.com/jnovack/cloudkey
+After=network-online.target
+Wants=network-online.target
+# The stock UI daemon owns the same framebuffer; make sure it never runs
+# alongside us and re-grabs the panel.
+Conflicts=ck-ui.service
+# Don't crash-loop forever if /dev/fb0 is missing or busy.
+StartLimitIntervalSec=60
+StartLimitBurst=4
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/cklcd.env
+ExecStart=/usr/local/bin/cklcd info
+Restart=on-failure
+RestartSec=5
+
+# Light hardening. The daemon needs /dev/fb0, so device isolation stays off.
+NoNewPrivileges=true
+ProtectHome=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,429 @@
+#!/usr/bin/env python3
+# cklcd — control the front-panel LCD on a UniFi CloudKey Gen2 / Gen2 Plus.
+#
+# The panel is a plain Linux framebuffer (/dev/fb0), roughly 160x60, typically
+# 16bpp RGB565. There is NO microcontroller / serial protocol to talk to — you
+# just draw pixels into the mmap'd framebuffer. This tool reads the real
+# geometry and pixel format from the kernel at runtime (FBIOGET_VSCREENINFO /
+# FBIOGET_FSCREENINFO) so it works regardless of the exact mode.
+#
+# IMPORTANT: the stock UniFi UI daemon `ck-ui` also owns this framebuffer and
+# will fight you for it, redrawing over whatever you write. Stop it first:
+#     systemctl stop ck-ui        # (or disable it — see scripts/10-deunifi.sh)
+#
+# Subcommands:
+#     cklcd info            # live status screen (hostname/IP/uptime/load/temp/disk); loops
+#     cklcd text "..."      # draw arbitrary multi-line text once and exit
+#     cklcd clear           # blank the panel
+#     cklcd image FILE      # draw an image file (scaled to fit), once
+#     cklcd qr "STRING"     # render a QR code (needs python3-qrcode), once
+#     cklcd probe           # print detected geometry/format and exit (no drawing)
+#
+# Dependencies: python3-pil (Pillow). qr also needs python3-qrcode.
+# No root needed beyond read/write access to /dev/fb0 (the service runs as root).
+#
+# This is intentionally a single dependency-light file so you can scp it onto a
+# stock CloudKey and run it. See README.md#lcd for the design notes.
+
+import argparse
+import fcntl
+import mmap
+import os
+import shutil
+import socket
+import struct
+import subprocess
+import sys
+import time
+
+# ---- fbdev ioctls (from <linux/fb.h>) --------------------------------------
+FBIOGET_VSCREENINFO = 0x4600
+FBIOGET_FSCREENINFO = 0x4602
+
+# fb_var_screeninfo: 8x u32 header, then red/green/blue/transp bitfields (3x u32 each).
+# We only need the header + the three colour bitfields' offset/length.
+_VAR_FMT = "@8I" + "3I" * 4
+
+# fb_fix_screeninfo up to and including line_length. Native alignment ("@")
+# inserts the padding the C struct has (2 bytes before line_length), and sizes
+# `smem_start`/pointers as the platform's `unsigned long` — correct on the
+# CloudKey's 32-bit armhf userland and on 64-bit hosts alike.
+_FIX_FMT = "@16sLIIIIHHHI"
+
+DEFAULT_FB = "/dev/fb0"
+
+
+class Framebuffer:
+    """Minimal fbdev wrapper: opens /dev/fb*, mmaps it, exposes blit()."""
+
+    def __init__(self, path=DEFAULT_FB):
+        self.path = path
+        self.fd = os.open(path, os.O_RDWR)
+
+        vbuf = bytearray(160)
+        fcntl.ioctl(self.fd, FBIOGET_VSCREENINFO, vbuf, True)
+        v = struct.unpack_from(_VAR_FMT, vbuf)
+        (self.xres, self.yres, _xv, _yv, _xo, _yo, self.bpp, self.grayscale,
+         self.r_off, self.r_len, _rm,
+         self.g_off, self.g_len, _gm,
+         self.b_off, self.b_len, _bm) = v
+        # The panel is physically a monochrome OLED. Depending on the kernel
+        # driver it may advertise a truecolor RGB565 mode (in which case the
+        # bitfields below are non-zero and we pack colour that the panel renders
+        # as luminance) or a grayscale mode (grayscale flag set, or no colour
+        # bitfields). Detect the latter and pack luminance instead.
+        self.is_gray = bool(self.grayscale) or not (self.r_len or self.g_len or self.b_len)
+
+        fbuf = bytearray(struct.calcsize(_FIX_FMT))
+        fcntl.ioctl(self.fd, FBIOGET_FSCREENINFO, fbuf, True)
+        f = struct.unpack_from(_FIX_FMT, fbuf)
+        self.smem_len = f[2]
+        self.line_length = f[9]
+        if not self.line_length:
+            self.line_length = self.xres * (self.bpp // 8)
+
+        self.bytes_pp = self.bpp // 8
+        if self.bytes_pp < 1:
+            raise RuntimeError(
+                f"framebuffer reports {self.bpp}bpp (<8bpp packed modes are not "
+                f"supported by cklcd). Run `cklcd probe` and open an issue with "
+                f"the output.")
+        length = self.line_length * self.yres
+        if self.smem_len:
+            length = min(max(length, self.line_length * self.yres), self.smem_len) or length
+        self.mem = mmap.mmap(self.fd, self.line_length * self.yres,
+                             mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
+
+    def describe(self):
+        return (f"{self.path}: {self.xres}x{self.yres} {self.bpp}bpp "
+                f"stride={self.line_length} "
+                f"R@{self.r_off}/{self.r_len} G@{self.g_off}/{self.g_len} "
+                f"B@{self.b_off}/{self.b_len}")
+
+    def _pack(self, r, g, b):
+        """Pack an 8-bit RGB triple into the panel's native pixel using the
+        kernel-reported bitfield offsets/lengths, so 565/888/8888 all work.
+        On a grayscale framebuffer, pack luminance across the whole word."""
+        if self.is_gray:
+            lum = (r * 77 + g * 150 + b * 29) >> 8  # 0..255
+            if self.bpp >= 8:
+                return lum & ((1 << self.bpp) - 1) if self.bpp < 32 else lum
+            # 1bpp: any non-black pixel is "on"
+            return 1 if lum >= 128 else 0
+        val = 0
+        if self.r_len:
+            val |= (r >> (8 - self.r_len)) << self.r_off
+        if self.g_len:
+            val |= (g >> (8 - self.g_len)) << self.g_off
+        if self.b_len:
+            val |= (b >> (8 - self.b_len)) << self.b_off
+        return val
+
+    def blit(self, img):
+        """Blit a PIL RGB image (already sized to the panel) to the framebuffer."""
+        px = img.load()
+        bpp = self.bytes_pp
+        stride = self.line_length
+        for y in range(self.yres):
+            row = bytearray(stride)
+            base = 0
+            for x in range(self.xres):
+                p = px[x, y]
+                val = self._pack(p[0], p[1], p[2])
+                if bpp == 2:
+                    row[base] = val & 0xFF
+                    row[base + 1] = (val >> 8) & 0xFF
+                elif bpp == 4:
+                    row[base] = val & 0xFF
+                    row[base + 1] = (val >> 8) & 0xFF
+                    row[base + 2] = (val >> 16) & 0xFF
+                    row[base + 3] = (val >> 24) & 0xFF
+                elif bpp == 3:
+                    row[base] = val & 0xFF
+                    row[base + 1] = (val >> 8) & 0xFF
+                    row[base + 2] = (val >> 16) & 0xFF
+                else:  # 1bpp or unusual: best-effort single byte
+                    row[base] = val & 0xFF
+                base += bpp
+            self.mem[y * stride:y * stride + stride] = bytes(row)
+        self.mem.flush()
+
+    def clear(self):
+        self.mem[:] = b"\x00" * len(self.mem)
+        self.mem.flush()
+
+    def close(self):
+        try:
+            self.mem.close()
+        finally:
+            os.close(self.fd)
+
+
+# ---- rendering -------------------------------------------------------------
+
+def _load_font(size):
+    try:
+        from PIL import ImageFont
+    except ImportError:
+        _die("python3-pil (Pillow) is required. Install it:\n"
+             "    apt-get install -y python3-pil")
+    # Prefer a small crisp TTF if present; fall back to Pillow's bundled bitmap
+    # font (about 11px tall) which is fine for a 160x60 panel.
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except OSError:
+                pass
+    return ImageFont.load_default()
+
+
+def render_text(fb, lines, font_size=11, pad=1, invert=False):
+    from PIL import Image, ImageDraw
+    fg = (0, 0, 0) if invert else (255, 255, 255)
+    bg = (255, 255, 255) if invert else (0, 0, 0)
+    img = Image.new("RGB", (fb.xres, fb.yres), bg)
+    draw = ImageDraw.Draw(img)
+    font = _load_font(font_size)
+    try:
+        line_h = font.getbbox("Ag")[3] + 1
+    except AttributeError:
+        line_h = font_size + 2
+    y = pad
+    for line in lines:
+        draw.text((pad, y), line, fill=fg, font=font)
+        y += line_h
+        if y >= fb.yres:
+            break
+    fb.blit(img)
+
+
+def render_image(fb, path):
+    from PIL import Image
+    img = Image.open(path).convert("RGB")
+    img.thumbnail((fb.xres, fb.yres))
+    canvas = Image.new("RGB", (fb.xres, fb.yres), (0, 0, 0))
+    canvas.paste(img, ((fb.xres - img.width) // 2, (fb.yres - img.height) // 2))
+    fb.blit(canvas)
+
+
+def render_qr(fb, data):
+    try:
+        import qrcode
+    except ImportError:
+        _die("python3-qrcode is required for `qr`:\n"
+             "    apt-get install -y python3-qrcode")
+    from PIL import Image
+    qr = qrcode.QRCode(border=1, box_size=1)
+    qr.add_data(data)
+    qr.make(fit=True)
+    code = qr.make_image(fill_color="white", back_color="black").convert("RGB")
+    side = min(fb.xres, fb.yres)
+    code = code.resize((side, side), Image.NEAREST)
+    canvas = Image.new("RGB", (fb.xres, fb.yres), (0, 0, 0))
+    canvas.paste(code, ((fb.xres - side) // 2, (fb.yres - side) // 2))
+    fb.blit(canvas)
+
+
+# ---- system facts (for `info`) ---------------------------------------------
+
+def primary_ip():
+    # Doesn't send traffic; just asks the routing table which source address
+    # would be used to reach the internet.
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("1.1.1.1", 80))
+        return s.getsockname()[0]
+    except OSError:
+        return "no-ip"
+    finally:
+        s.close()
+
+
+def uptime_str():
+    with open("/proc/uptime") as fh:
+        secs = int(float(fh.read().split()[0]))
+    d, rem = divmod(secs, 86400)
+    h, rem = divmod(rem, 3600)
+    m, _ = divmod(rem, 60)
+    if d:
+        return f"{d}d {h}h {m}m"
+    if h:
+        return f"{h}h {m}m"
+    return f"{m}m"
+
+
+def loadavg_str():
+    return "%.2f %.2f %.2f" % os.getloadavg()
+
+
+def mem_used_pct():
+    info = {}
+    with open("/proc/meminfo") as fh:
+        for line in fh:
+            k, _, v = line.partition(":")
+            info[k] = int(v.split()[0])
+    total = info.get("MemTotal", 0)
+    avail = info.get("MemAvailable", info.get("MemFree", 0))
+    if not total:
+        return "?"
+    return f"{100 * (total - avail) // total}%"
+
+
+def cpu_temp():
+    # Try the common thermal zone sysfs paths; qcom exposes several tsens zones.
+    for zone in sorted(_glob("/sys/class/thermal/thermal_zone*/temp")):
+        try:
+            with open(zone) as fh:
+                milli = int(fh.read().strip())
+            if 0 < milli < 200000:
+                return f"{milli / 1000:.0f}C"
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def disk_pct(path):
+    try:
+        st = os.statvfs(path)
+    except OSError:
+        return None
+    total = st.f_blocks * st.f_frsize
+    free = st.f_bavail * st.f_frsize
+    if not total:
+        return None
+    return f"{100 * (total - free) // total}%"
+
+
+def _glob(pattern):
+    import glob
+    return glob.glob(pattern)
+
+
+def info_lines(disk_path):
+    host = socket.gethostname()
+    lines = [
+        host[:26],
+        f"IP {primary_ip()}",
+        f"up {uptime_str()}",
+        f"ld {loadavg_str()}",
+    ]
+    extras = []
+    t = cpu_temp()
+    if t:
+        extras.append(t)
+    extras.append(f"mem {mem_used_pct()}")
+    lines.append(" ".join(extras))
+    d = disk_pct(disk_path)
+    if d is not None:
+        label = "vol" if disk_path != "/" else "root"
+        lines.append(f"{label} {d} used")
+    return lines
+
+
+# ---- cli -------------------------------------------------------------------
+
+def _die(msg, code=1):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def _open_fb(path):
+    """Open the framebuffer, turning the common failures into clean messages
+    instead of a traceback."""
+    try:
+        return Framebuffer(path)
+    except FileNotFoundError:
+        _die(f"no framebuffer at {path}. On a CloudKey the panel is /dev/fb0; "
+             f"is this the right device (and the right hardware)?")
+    except PermissionError:
+        _die(f"permission denied opening {path}. Run as root (the service does).")
+    except OSError as e:
+        _die(f"could not initialise framebuffer {path}: {e}\n"
+             f"If another process (e.g. stock ck-ui) holds it, stop that first: "
+             f"systemctl stop ck-ui")
+
+
+def _warn_ck_ui():
+    # Non-fatal heads-up: if ck-ui is running it will redraw over us.
+    if not shutil.which("systemctl"):
+        return
+    try:
+        active = subprocess.run(
+            ["systemctl", "is-active", "ck-ui"],
+            capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return
+    if active == "active":
+        print("warning: ck-ui.service is running and will redraw over the panel.\n"
+              "         stop it first:  systemctl stop ck-ui", file=sys.stderr)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="cklcd", description="CloudKey Gen2 LCD control")
+    ap.add_argument("--fb", default=os.environ.get("CKLCD_FB", DEFAULT_FB),
+                    help="framebuffer device (default /dev/fb0)")
+    ap.add_argument("--font-size", type=int,
+                    default=int(os.environ.get("CKLCD_FONT_SIZE", "11")))
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p_info = sub.add_parser("info", help="live status screen (loops)")
+    p_info.add_argument("--interval", type=float,
+                        default=float(os.environ.get("CKLCD_INTERVAL", "5")))
+    p_info.add_argument("--disk", default=os.environ.get("CKLCD_DISK", "/volume"),
+                        help="filesystem to report usage for (default /volume, "
+                             "falls back to / if absent)")
+    p_info.add_argument("--once", action="store_true", help="draw once and exit")
+
+    p_text = sub.add_parser("text", help="draw text and exit")
+    p_text.add_argument("text", help="text to draw; use \\n for line breaks")
+    p_text.add_argument("--invert", action="store_true")
+
+    sub.add_parser("clear", help="blank the panel")
+    sub.add_parser("probe", help="print detected geometry/format and exit")
+
+    p_img = sub.add_parser("image", help="draw an image file and exit")
+    p_img.add_argument("path")
+
+    p_qr = sub.add_parser("qr", help="render a QR code and exit")
+    p_qr.add_argument("data")
+
+    args = ap.parse_args(argv)
+
+    if args.cmd == "probe":
+        fb = _open_fb(args.fb)
+        print(fb.describe())
+        fb.close()
+        return
+
+    _warn_ck_ui()
+    fb = _open_fb(args.fb)
+    try:
+        if args.cmd == "clear":
+            fb.clear()
+        elif args.cmd == "text":
+            render_text(fb, args.text.split("\\n"), font_size=args.font_size,
+                        invert=args.invert)
+        elif args.cmd == "image":
+            render_image(fb, args.path)
+        elif args.cmd == "qr":
+            render_qr(fb, args.data)
+        elif args.cmd == "info":
+            disk = args.disk if os.path.exists(args.disk) else "/"
+            while True:
+                render_text(fb, info_lines(disk), font_size=args.font_size)
+                if args.once:
+                    break
+                time.sleep(args.interval)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        fb.close()
+
+
+if __name__ == "__main__":
+    main()

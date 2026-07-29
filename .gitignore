@@ -1,0 +1,11 @@
+# Backups / images produced by 00-preflight-backup.sh — never commit these
+*.img
+*.img.sha256
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor noise
+*.swp
+.DS_Store

@@ -1,0 +1,32 @@
+# Example systemd mount unit for the internal 2.5" disk.
+#
+# 30-mount-storage.sh generates this for you with the real UUID and a filename
+# matching your mountpoint. It's included here as a paste-in reference for the
+# manual path, and to make the ONE thing that matters explicit:
+#
+#   On the CloudKey you must mount via a systemd .mount unit, NOT /etc/fstab.
+#   The base-files package rewrites /etc/fstab to a template on every boot and
+#   silently drops any line you add. Unit files under /etc/systemd/system/ are
+#   left alone and survive reboots.
+#
+# The unit's FILENAME must match its mountpoint per systemd-escape, e.g. a mount
+# at /volume must be named  volume.mount ; /srv/data must be  srv-data.mount .
+# Generate the correct name with:  systemd-escape -p --suffix=mount /your/path
+#
+# Install:
+#   1. blkid /dev/sda            # get the filesystem UUID
+#   2. edit What= below with it
+#   3. cp volume.mount /etc/systemd/system/volume.mount
+#   4. systemctl daemon-reload && systemctl enable --now volume.mount
+
+[Unit]
+Description=Bulk storage drive at /volume
+
+[Mount]
+What=/dev/disk/by-uuid/REPLACE-WITH-BLKID-UUID
+Where=/volume
+Type=ext4
+Options=defaults,noatime,nofail,x-systemd.device-timeout=30
+
+[Install]
+WantedBy=local-fs.target

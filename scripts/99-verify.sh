@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# 99-verify.sh — post-install health check. Read-only; changes nothing.
+# Run after a reboot to confirm the box came back clean and everything the
+# project cares about is working: no UniFi supervisor left running, SSH up,
+# storage mounted, LCD service alive, network/PoE sane.
+
+set -uo pipefail
+cd "$(dirname "$0")"
+. lib/common.sh
+
+pass=0; fail=0
+check() { # check "label" command...
+  local label="$1"; shift
+  if "$@" >/dev/null 2>&1; then ok "$label"; pass=$((pass+1));
+  else err "$label"; fail=$((fail+1)); fi
+}
+
+echo "== identity =="
+log "model:    $(ck_model)"
+log "uname:    $(uname -srm)"
+log "userland: $(dpkg --print-architecture 2>/dev/null)"
+log "os:       $(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown}")"
+log "uptime:   $(uptime -p 2>/dev/null || cat /proc/uptime)"
+
+echo; echo "== services =="
+check "sshd accepting connections" ssh_alive
+check "no UniFi 'unifi' service active"        bash -c '! systemctl is-active --quiet unifi.service'
+check "no UniFi supervisor (uhwd) active"      bash -c '! systemctl is-active --quiet uhwd.service'
+check "no infctld active"                      bash -c '! systemctl is-active --quiet infctld.service'
+# One (and only one) front-panel daemon should be running.
+if systemctl is-active --quiet cloudkey.service 2>/dev/null; then
+  ok "front-panel daemon active: cloudkey (jnovack)"; pass=$((pass+1))
+elif systemctl is-active --quiet cklcd.service 2>/dev/null; then
+  ok "front-panel daemon active: cklcd"; pass=$((pass+1))
+elif systemctl list-unit-files 'cklcd.service' 'cloudkey.service' >/dev/null 2>&1; then
+  warn "an LCD service is installed but not active (check 40-/41-install-*.sh)"
+fi
+if systemctl is-active --quiet cloudkey.service 2>/dev/null && \
+   systemctl is-active --quiet cklcd.service 2>/dev/null; then
+  err "BOTH cloudkey and cklcd are active — they will fight over /dev/fb0. Disable one."; fail=$((fail+1))
+fi
+
+echo; echo "== storage =="
+if [[ -b /dev/sda ]]; then
+  ok "/dev/sda present ($(lsblk -dno SIZE /dev/sda 2>/dev/null | tr -d ' '))"
+  if findmnt -rno TARGET /dev/sda >/dev/null 2>&1 || findmnt /volume >/dev/null 2>&1; then
+    ok "bulk disk mounted: $(findmnt -rno TARGET,SOURCE /volume 2>/dev/null || findmnt -rno TARGET /dev/sda*)"
+  else
+    warn "SATA disk present but not mounted (run 30-mount-storage.sh)"
+  fi
+else
+  warn "/dev/sda not present (no internal disk installed?)"
+fi
+log "eMMC: $(lsblk -dno NAME,SIZE /dev/mmcblk0 2>/dev/null)"
+
+echo; echo "== network / PoE =="
+# NIC is the USB ASIX AX88179; if you're reading this over SSH, PoE/USB-C power
+# and the NIC are obviously fine, but report the details anyway.
+IFACE="$(ip -o -4 route show to default 2>/dev/null | awk '{print $5; exit}')"
+if [[ -n "${IFACE:-}" ]]; then
+  ok "default route via $IFACE, IP $(ip -o -4 addr show "$IFACE" | awk '{print $4}' | head -1)"
+  DRV="$(basename "$(readlink -f "/sys/class/net/$IFACE/device/driver" 2>/dev/null)" 2>/dev/null)"
+  log "NIC driver: ${DRV:-unknown} (expect ax88179_178a — USB gigabit)"
+else
+  err "no default route found"
+fi
+
+echo; echo "== panel =="
+if [[ -e /dev/fb0 ]] && command -v cklcd >/dev/null 2>&1; then
+  log "$(cklcd probe 2>&1 || echo 'cklcd probe failed')"
+else
+  warn "no /dev/fb0 or cklcd not installed"
+fi
+
+echo; echo "== thermals (fanless — keep an eye on this) =="
+for z in /sys/class/thermal/thermal_zone*/temp; do
+  [[ -r "$z" ]] || continue
+  t=$(cat "$z" 2>/dev/null); printf '   %s: %s°C\n' "$(dirname "$z" | xargs basename)" "$((t/1000))"
+done
+
+echo
+if [[ "$fail" -eq 0 ]]; then ok "All $pass checks passed."; else err "$fail check(s) failed, $pass passed."; fi
+exit "$fail"
