@@ -10,17 +10,32 @@
 #   2. writes /etc/systemd/system/<escaped>.mount  (What=<base>/<name>, bind),
 #   3. activates it (or, for /var/log, defers to the next boot — see below).
 #
-# Defaults: /home and /srv (safe to bind live). /var/log is opt-in (--var-log)
-# because running loggers hold it open, so its bind is installed but only takes
-# effect after a reboot; this path also caps the persistent journal.
+# Defaults: /home, /srv, and /var/log (system logs — a steady eMMC drip you want
+# gone). /home and /srv bind live; /var/log's bind is installed but takes effect
+# on the next boot (running loggers hold it open), and this path also caps the
+# persistent journal. Pass --no-var-log to leave logs on the eMMC.
+#
+# WHY BIND MOUNTS AND NOT A SYMLINK (e.g. /var -> /volume/var):
+#   A symlink is the WRONG tool here and is LESS resilient, not more. /var is
+#   needed very early in boot — long before this USB-attached disk enumerates —
+#   and it holds load-bearing state like /var/lib/dpkg (the entire package DB)
+#   and /var/lib/systemd. If /var were a symlink into /volume and the disk were
+#   slow or dead, those paths would resolve to an EMPTY stub on the eMMC: dpkg
+#   thinks nothing is installed, services start against blank state, boot breaks
+#   silently. A `nofail` bind mount does the opposite — if the disk doesn't come
+#   up, the bind simply doesn't happen and the directory falls back to its real
+#   copy on the eMMC, and the box boots fine. That graceful fallback is exactly
+#   what you wanted from "a soft link so boot won't fail" — and only the bind
+#   mount actually delivers it. So we bind only the write-heavy LEAVES
+#   (/var/log), never /var wholesale.
 #
 # Run AFTER 30-mount-storage.sh (so /volume exists). Idempotent: re-running skips
 # anything already rehomed.
 #
 # Usage:
-#   ./35-rehome-storage.sh                 # rehome /home + /srv to /volume/*
-#   ./35-rehome-storage.sh --var-log       # also rehome /var/log (activates on reboot)
-#   ./35-rehome-storage.sh --base /srv/data --var-log
+#   ./35-rehome-storage.sh                 # rehome /home + /srv + /var/log to /volume/*
+#   ./35-rehome-storage.sh --no-var-log    # leave system logs on the eMMC
+#   ./35-rehome-storage.sh --base /srv/data
 #   ./35-rehome-storage.sh -n              # dry run: show the plan, change nothing
 #   ./35-rehome-storage.sh -y              # no prompts
 
@@ -29,13 +44,14 @@ cd "$(dirname "$0")"
 . lib/common.sh
 
 BASE="/volume"
-DO_VARLOG=0
+DO_VARLOG=1            # default: rehome /var/log too (opt out with --no-var-log)
 DRYRUN=0
 ASSUME_YES=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --base) BASE="$2"; shift 2 ;;
-    --var-log) DO_VARLOG=1; shift ;;
+    --no-var-log) DO_VARLOG=0; shift ;;
+    --var-log) DO_VARLOG=1; shift ;;   # accepted for back-compat; now the default
     -n|--dry-run) DRYRUN=1; shift ;;
     -y) ASSUME_YES=1; shift ;;
     -*) die "unknown option: $1" ;;

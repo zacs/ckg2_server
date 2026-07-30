@@ -138,19 +138,49 @@ Defaults it rehomes:
 
 | Dir | Why | Default |
 |-----|-----|---------|
-| `/home` | user data, dotfiles, anything you scp in | on |
-| `/srv` | the conventional home for served data | on |
-| `/var/log` | rsyslog + journald writes — a steady eMMC drip | opt-in (`--var-log`) |
+| `/home` | user data, dotfiles, anything you scp in | on (binds live) |
+| `/srv` | the conventional home for served data | on (binds live) |
+| `/var/log` | rsyslog + journald writes — a steady eMMC drip | on (activates on reboot) |
 
-`/var/log` is opt-in only because rebinding it cleanly requires a reboot (running
-loggers hold open file handles). The script rsyncs it and installs the unit; the
-bind takes effect on the next boot, ordered before the loggers start. It also
-drops a **journald cap** (`SystemMaxUse=200M`) so the persistent journal can't
-balloon.
+`/var/log` binds on the next boot rather than live, because running loggers hold
+open file handles. The script rsyncs it and installs the unit; the bind takes
+effect at boot, ordered before the loggers start. It also drops a **journald cap**
+(`SystemMaxUse=200M`) so the persistent journal can't balloon. Pass
+`--no-var-log` if you want logs to stay on the eMMC for some reason.
 
 What it deliberately does **not** move: `/` itself, `/boot`, `/etc`, `/usr`,
 `/var/lib` (except Docker, handled separately) — those are the OS and belong on
 the eMMC where the boot process expects them.
+
+### Why bind mounts, and NOT a symlink like `/var -> /volume/var`
+
+Tempting, and it *sounds* like it'd fail more gracefully. It's the opposite —
+this is the one place to get it right:
+
+- **`/var` is needed before the disk exists.** The SATA drive is USB-attached and
+  enumerates a beat *after* boot starts. `/var` is in use from the very first
+  moments — and it holds load-bearing state: `/var/lib/dpkg` is the **entire
+  package database**, `/var/lib/systemd` is systemd's own state.
+- **A symlink fails *dangerously*, not gracefully.** If `/var` symlinks into
+  `/volume` and the disk is slow or dead, those paths resolve to an **empty stub**
+  on the eMMC. `dpkg` now thinks nothing is installed; services start against
+  blank state; the box boots subtly broken, silently. Later, when the disk
+  mounts, it's shadowed — split-brain.
+- **A `nofail` bind mount fails *safely*.** If the disk doesn't come up, the bind
+  simply doesn't happen and the directory falls back to its **real copy on the
+  eMMC** — the box boots fine, just logging to eMMC until the disk returns. That
+  graceful "boot won't fail if USB got fucked up" behaviour is precisely what you
+  wanted, and only the bind mount actually delivers it.
+
+So the rule is: **bind the write-heavy leaves (`/var/log`), never `/var`
+wholesale.** Docker's runtime is the other big one, and it's handled the
+Docker-native way (`data-root`) rather than by bind-mounting `/var/lib/docker`.
+Between the two, the things that actually churn are on `/volume`, and the OS
+state that must survive a dead disk stays on the eMMC.
+
+> Want the apt download cache off the eMMC too? It's low-value (transient `.deb`
+> files) but harmless: `/var/cache/apt/archives` can be bind-mounted the same way
+> by hand, or just run `apt-get clean` now and then.
 
 ## Recommended order
 
@@ -158,9 +188,9 @@ Slotting into the Path A flow from [03-install-stock.md](03-install-stock.md):
 
 ```bash
 sudo ./30-mount-storage.sh /dev/sda     # /volume exists first — everything else needs it
-sudo ./35-rehome-storage.sh             # /home + /srv onto /volume  (add --var-log for logs)
+sudo ./35-rehome-storage.sh             # /home + /srv + /var/log onto /volume
 sudo ./50-install-docker.sh             # Docker with data-root on /volume + capped logs
-sudo reboot                             # if you used --var-log, reboot to activate the bind
+sudo reboot                             # activates the /var/log bind (deferred by design)
 ```
 
 `99-verify.sh` reports the Docker `data-root`, the active rehome bind-mounts, and

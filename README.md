@@ -60,7 +60,7 @@ sudo ./20-provision.sh                                   # 6. tools, firewall, a
 sudo ./30-mount-storage.sh /dev/sda                      # 7. format + mount the 2.5" disk at /volume
 sudo ./41-install-cloudkey.sh                            # 8. rich OLED daemon (LEDs, button, web dashboard)
 
-sudo ./35-rehome-storage.sh                              # 9. (optional) /home + /srv onto the SATA disk
+sudo ./35-rehome-storage.sh                              # 9. (optional) /home + /srv + /var/log onto the SATA disk
 sudo ./50-install-docker.sh                              #    (optional) Docker, runtime on /volume, logs capped
 sudo ./99-verify.sh                                      # 10. final health check
 ```
@@ -172,7 +172,7 @@ ckg2_server/
 │   ├── 10-deunifi.sh             remove UniFi + disable the supervisor/watchdog (dry-run by default)
 │   ├── 20-provision.sh           base tools, ufw, unattended-upgrades, NTP, SSH hardening
 │   ├── 30-mount-storage.sh       format + persistently mount /dev/sda (systemd .mount, not fstab)
-│   ├── 35-rehome-storage.sh      bind /home, /srv, (opt) /var/log onto /volume to spare the eMMC
+│   ├── 35-rehome-storage.sh      bind /home, /srv, /var/log onto /volume (nofail) to spare the eMMC
 │   ├── 40-install-lcd.sh         install the lightweight cklcd panel tool + service
 │   ├── 41-install-cloudkey.sh    install the richer jnovack/cloudkey daemon (LEDs, button, web UI)
 │   ├── 50-install-docker.sh      install Docker; runtime → /volume/docker; cap container logs
