@@ -52,6 +52,33 @@ else
   warn "/dev/sda not present (no internal disk installed?)"
 fi
 log "eMMC: $(lsblk -dno NAME,SIZE /dev/mmcblk0 2>/dev/null)"
+# Rehomed dirs (35-rehome-storage.sh) — anything still on the eMMC keeps wearing it.
+for d in /home /srv /var/log; do
+  src="$(findmnt -rno SOURCE "$d" 2>/dev/null || true)"
+  if [[ -n "$src" && "$src" != /dev/mmcblk* ]]; then
+    ok "$d rehomed (from $src)"
+  else
+    log "$d on root/eMMC (not rehomed)"
+  fi
+done
+
+echo; echo "== docker (if installed) =="
+if command -v docker >/dev/null 2>&1; then
+  if docker info >/dev/null 2>&1; then
+    root="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null)"
+    drv="$(docker info -f '{{.Driver}}' 2>/dev/null)"
+    rootsrc="$(findmnt -rno SOURCE -T "$root" 2>/dev/null || true)"
+    if [[ -n "$rootsrc" && "$rootsrc" != /dev/mmcblk* ]]; then
+      ok "docker data-root $root on $rootsrc (off the eMMC), driver=$drv"; pass=$((pass+1))
+    else
+      warn "docker data-root $root is on the eMMC ($rootsrc) — see 50-install-docker.sh / docs/10"
+    fi
+  else
+    warn "docker installed but daemon not responding (journalctl -u docker)"
+  fi
+else
+  log "docker not installed"
+fi
 
 echo; echo "== network / PoE =="
 # NIC is the USB ASIX AX88179; if you're reading this over SSH, PoE/USB-C power

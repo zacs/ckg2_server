@@ -76,13 +76,25 @@ sudo ./41-install-cloudkey.sh                  # featured: jnovack daemon (LEDs,
 #   -- or the lightweight text-only tool instead --
 # sudo ./40-install-lcd.sh                      # this repo's minimal cklcd
 
-# 9. Final health check:
+# 9. (optional) Keep writes off the soldered eMMC — see docs/10-storage-and-docker.md:
+sudo ./35-rehome-storage.sh                    # move /home + /srv onto /volume (add --var-log for logs)
+sudo ./50-install-docker.sh                    # Docker w/ data-root on /volume + capped logs
+
+# 10. Final health check:
 sudo ./99-verify.sh
 ```
 
 You now have a plain Debian box with `/volume` for bulk data, a firewall, a
 status screen, and no UniFi reboots. Install whatever you like (`apt install …`,
 Docker, etc.).
+
+> **Where does the OS live? Where do Docker's runtime and volumes go?** The OS
+> stays on the **eMMC** (`/dev/mmcblk0`, `/`) — Path A never reinstalls it. The
+> SATA disk (`/dev/sda` → `/volume`) is bulk storage and the place for anything
+> write-heavy. Docker's runtime defaults to `/var/lib/docker` on the eMMC; step 9
+> relocates it to `/volume/docker` and caps container logs, and can rehome
+> `/home`, `/srv`, and `/var/log` too. Full explanation:
+> [10-storage-and-docker.md](10-storage-and-docker.md).
 
 > **Will I still be root with my old password?** Yes. The SSH/root password lives
 > in `/etc/shadow`, and the purge doesn't touch it; the account UniFi keeps in
@@ -99,8 +111,10 @@ Docker, etc.).
 | `10-deunifi.sh` | Purge UniFi apps + disable supervisor/watchdog | **Dry-run by default**; simulate-gate aborts on any cascade into `ck-ui`/`ubnt-tools`/`*-base-files`/initramfs/kernel; batched purge with SSH liveness check between batches |
 | `20-provision.sh` | Base tooling, ufw, unattended-upgrades, NTP, light SSH hardening | Idempotent; does **not** disable password auth (won't lock you out) |
 | `30-mount-storage.sh` | ext4 + systemd `.mount` for `/dev/sda` | Refuses eMMC/mounted disks; uses a `.mount` unit (survives the fstab rewrite) |
+| `35-rehome-storage.sh` | Bind-mount `/home`, `/srv` (opt-in `/var/log`) onto `/volume` | Copies (never deletes) originals; requires `/volume` on the SATA disk; bind units, not fstab |
 | `40-install-lcd.sh` | Install lightweight `cklcd` + service, disable stock `ck-ui` | Idempotent; probes `/dev/fb0` first |
 | `41-install-cloudkey.sh` | Install the richer `jnovack/cloudkey` daemon (LEDs, button, web UI) | Pinned release; verifies it's an ARM ELF; disables `ck-ui` **and** `cklcd` so only one owns `/dev/fb0` |
+| `50-install-docker.sh` | Install Docker; `data-root`→`/volume/docker`; cap container logs | Refuses eMMC data-root unless forced; kernel-aware storage-driver; backs up existing `daemon.json` |
 | `99-verify.sh` | Read-only health check | Changes nothing |
 
 ## Modernizing the userland (optional)

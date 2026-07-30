@@ -59,12 +59,25 @@ sudo ./99-verify.sh                                      # 5. confirm a clean bo
 sudo ./20-provision.sh                                   # 6. tools, firewall, auto-updates, NTP
 sudo ./30-mount-storage.sh /dev/sda                      # 7. format + mount the 2.5" disk at /volume
 sudo ./41-install-cloudkey.sh                            # 8. rich OLED daemon (LEDs, button, web dashboard)
-sudo ./99-verify.sh                                      # 9. final health check
+
+sudo ./35-rehome-storage.sh                              # 9. (optional) /home + /srv onto the SATA disk
+sudo ./50-install-docker.sh                              #    (optional) Docker, runtime on /volume, logs capped
+sudo ./99-verify.sh                                      # 10. final health check
 ```
 
 That's it — a Debian box with `/volume` for bulk data, a firewall, automatic
 security updates, and the front panel showing hostname / IP / uptime. `apt
 install` whatever you want from here.
+
+**Where does the OS live, and where does Docker go?** The OS stays on the
+**eMMC** (`/dev/mmcblk0`, mounted at `/`) — Path A never reinstalls it, it just
+strips UniFi off the top. The 2.5" SATA disk (`/dev/sda` → `/volume`) is bulk
+storage and the home for anything write-heavy. Docker's runtime defaults to
+`/var/lib/docker` **on the eMMC**; `50-install-docker.sh` relocates it to
+`/volume/docker` and caps container logs, and `35-rehome-storage.sh` can move
+`/home`, `/srv`, and `/var/log` off the eMMC too — because the eMMC is soldered
+down and wears out, while the SATA disk is swappable. Full detail:
+[docs/10-storage-and-docker.md](docs/10-storage-and-docker.md).
 
 **Credentials, in one line:** after de-UniFi you're still **`root` with the same
 SSH password** — it lives in `/etc/shadow`, not the UniFi database, so the purge
@@ -159,8 +172,10 @@ ckg2_server/
 │   ├── 10-deunifi.sh             remove UniFi + disable the supervisor/watchdog (dry-run by default)
 │   ├── 20-provision.sh           base tools, ufw, unattended-upgrades, NTP, SSH hardening
 │   ├── 30-mount-storage.sh       format + persistently mount /dev/sda (systemd .mount, not fstab)
+│   ├── 35-rehome-storage.sh      bind /home, /srv, (opt) /var/log onto /volume to spare the eMMC
 │   ├── 40-install-lcd.sh         install the lightweight cklcd panel tool + service
 │   ├── 41-install-cloudkey.sh    install the richer jnovack/cloudkey daemon (LEDs, button, web UI)
+│   ├── 50-install-docker.sh      install Docker; runtime → /volume/docker; cap container logs
 │   └── 99-verify.sh              read-only post-install health check
 ├── lcd/
 │   └── cklcd                     Python framebuffer tool for the front panel
@@ -168,7 +183,8 @@ ckg2_server/
 │   ├── cklcd.service             the LCD status daemon unit
 │   └── volume.mount.example      paste-in disk mount unit (why: fstab gets rewritten)
 ├── config/
-│   └── cklcd.env.example         config for cklcd.service (→ /etc/cklcd.env)
+│   ├── cklcd.env.example         config for cklcd.service (→ /etc/cklcd.env)
+│   └── docker-daemon.json.example  Docker data-root + log-cap config (→ /etc/docker/daemon.json)
 └── docs/
     ├── 01-hardware.md            teardown-level BOM + the APQ8053 correction
     ├── 02-serial-console.md      UART header, adapter, baud
@@ -178,7 +194,8 @@ ckg2_server/
     ├── 06-recovery.md            un-bricking
     ├── 07-watchdog-and-persistence.md   why it reboots + making changes stick
     ├── 08-mainline-kernel.md     experimental modern-kernel research
-    └── 09-accounts-and-access.md credentials, SSH, and not locking yourself out
+    ├── 09-accounts-and-access.md credentials, SSH, and not locking yourself out
+    └── 10-storage-and-docker.md  OS-on-eMMC vs SATA disk, Docker runtime/volumes, rehoming
 ```
 
 ---
