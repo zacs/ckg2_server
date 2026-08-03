@@ -1,0 +1,123 @@
+# examples/compose.example.yml — a starter stack for the reclaimed CloudKey.
+# NOT wired into any install script; copy it onto the box and edit to taste.
+#
+# It's the stack from the project notes: Arcane (Docker UI / observability),
+# Technitium (DNS), and Uptime Kuma (status monitoring — the "healthchecks but
+# nicer" piece). Every image below publishes a linux/arm/v7 variant, which is
+# what this box's 32-bit armhf userland needs. (If you ever add an image and it
+# won't pull with a manifest/architecture error, it just doesn't ship 32-bit ARM
+# — check first with:  docker manifest inspect <image> | grep -A2 arm)
+#
+# ── Before you bring this up ──────────────────────────────────────────────────
+#  1. Run ../scripts/50-install-docker.sh first — it sets Docker's data-root to
+#     /volume/docker, picks a kernel-appropriate storage-driver (likely vfs on
+#     the stock 3.18 kernel — fine, just space-heavy), and caps container logs.
+#  2. FREE PORT 53. Technitium binds :53; on a de-UniFi'd box systemd-resolved's
+#     stub listener often already holds it. Check and disable the stub:
+#         sudo ss -ulpn 'sport = :53'
+#         # if systemd-resolved owns it:
+#         echo -e '[Resolve]\nDNSStubListener=no' | sudo tee /etc/systemd/resolved.conf.d/10-no-stub.conf
+#         sudo systemctl restart systemd-resolved
+#  3. Create the data dirs on the SATA disk (so nothing lands on the eMMC) and,
+#     for the PUID/PGID services, make them writable by that uid:
+#         sudo mkdir -p /volume/appdata/{arcane,technitium,uptime-kuma}
+#         sudo chown -R 1000:1000 /volume/appdata/arcane
+#  4. Fill in the secrets/passwords marked REPLACE_ME below. For the Arcane
+#     secrets:  openssl rand -hex 32
+#
+# ── Where to put it & run it ──────────────────────────────────────────────────
+#     sudo mkdir -p /volume/stacks/core && sudo cp compose.example.yml /volume/stacks/core/compose.yml
+#     cd /volume/stacks/core && sudo docker compose up -d
+#
+# Data lives under /volume/appdata (bulk SATA disk), not the eMMC — matching the
+# storage plan in ../docs/10-storage-and-docker.md. Log rotation is handled
+# globally by daemon.json (from 50-install-docker.sh), so no per-service logging
+# blocks are needed here.
+
+name: core
+
+services:
+  # ── Docker management UI: your single pane for logs, stats, restarts ────────
+  arcane:
+    image: ghcr.io/getarcaneapp/manager:latest   # pin a version tag in production
+    container_name: arcane
+    restart: unless-stopped
+    ports:
+      - "3552:3552"
+    environment:
+      - APP_URL=http://cloudkey.lan:3552          # the URL you'll reach it on
+      - ENCRYPTION_KEY=REPLACE_ME_openssl_rand_hex_32
+      - JWT_SECRET=REPLACE_ME_openssl_rand_hex_32
+      - PUID=1000
+      - PGID=1000
+    cgroup: host                                   # reliable self-detection on upgrades
+    volumes:
+      # Read the Docker socket to manage the host's containers. This is
+      # root-equivalent access — fine for a single-user homelab box, worth knowing.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /volume/appdata/arcane:/app/data
+    # First login is admin / admin — change it immediately.
+
+  # ── DNS server ──────────────────────────────────────────────────────────────
+  technitium:
+    image: technitium/dns-server:latest            # pin a version tag in production
+    container_name: technitium
+    restart: unless-stopped
+    # A DNS server benefits from host networking (it sees real client IPs, and
+    # you avoid juggling every DNS port). If you prefer that, delete the whole
+    # `ports:` block and uncomment the next line:
+    # network_mode: host
+    ports:
+      - "5380:5380/tcp"   # web admin console
+      - "53:53/udp"       # DNS
+      - "53:53/tcp"       # DNS
+      # - "853:853/tcp"   # DNS-over-TLS   (uncomment if you use it)
+      # - "443:443/tcp"   # DNS-over-HTTPS (uncomment if you use it)
+      # - "67:67/udp"     # DHCP           (uncomment if you run DHCP here)
+    environment:
+      - DNS_SERVER_DOMAIN=cloudkey.lan
+      - DNS_SERVER_ADMIN_PASSWORD=REPLACE_ME
+    volumes:
+      - /volume/appdata/technitium:/etc/dns
+    sysctls:
+      # Lets the container hold the larger UDP buffers a busy resolver wants.
+      - net.ipv4.ip_local_port_range=1024 65000
+    # Query logging is the #1 write source for a DNS box — it now lives under
+    # /volume (off the eMMC), but still trim retention in the Technitium UI.
+
+  # ── Status monitoring / uptime dashboard (the "better healthchecks") ────────
+  uptime-kuma:
+    image: louislam/uptime-kuma:1                  # :1 tracks the stable 1.x line
+    container_name: uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - /volume/appdata/uptime-kuma:/app/data
+
+  # ── OPTIONAL: auto-restart containers that report unhealthy ─────────────────
+  # A lightweight "watchdog": watches for containers with a HEALTHCHECK that go
+  # unhealthy and restarts them. Verify armv7 before enabling:
+  #   docker manifest inspect willfarrell/autoheal | grep -A2 arm
+  # autoheal:
+  #   image: willfarrell/autoheal:latest
+  #   container_name: autoheal
+  #   restart: unless-stopped
+  #   environment:
+  #     - AUTOHEAL_CONTAINER_LABEL=all   # or label specific services autoheal=true
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+
+  # ── OPTIONAL: automatic image updates ───────────────────────────────────────
+  # Handy, but auto-updating on this old-kernel/armhf box can surprise you (a new
+  # image that needs a newer kernel just stops working). Pin tags and update
+  # deliberately, or enable this with eyes open. Verify armv7 as above.
+  # watchtower:
+  #   image: containrrr/watchtower:latest
+  #   container_name: watchtower
+  #   restart: unless-stopped
+  #   environment:
+  #     - WATCHTOWER_CLEANUP=true
+  #     - WATCHTOWER_SCHEDULE=0 0 4 * * *   # 4am daily
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock

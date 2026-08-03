@@ -107,6 +107,10 @@ to `data-root`. That's covered by the journald cap in the rehome section below.)
   those are on the eMMC.
 - **Compose:** put the project under `/volume` (e.g. `/volume/stacks/myapp`) and
   use relative bind paths, or name your volumes and let `data-root` place them.
+  There's a ready-to-paste starter stack (Arcane + Technitium + Uptime Kuma, all
+  armv7, data under `/volume`) in
+  [examples/compose.example.yml](../examples/compose.example.yml) — it's just an
+  example, not wired into any install script.
 
 ### Reality check: old kernel + 32-bit userland
 

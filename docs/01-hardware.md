@@ -40,6 +40,31 @@ is `3.18.44-ui-qcom`, and the flash partitions are Qualcomm's (`sbl1`, `devcfg`,
 | **Cooling** | **None — fanless / passive** | Runs hot. See safety note. |
 | **Serial** | 3.3 V TTL UART | Pads `JDB2` labelled `T`/`R`/`G`, a.k.a. "J22". 115200 8N1. See [02-serial-console.md](02-serial-console.md). |
 
+## External I/O — can I plug in a USB peripheral? (No)
+
+Per Ubiquiti's own quick-start guide, the external connectors are: the **Gigabit
+Ethernet** port (PoE-in), **two USB-C ports**, a **microSD slot**, a Kensington
+**security slot**, and the **13-pin** rackmount-accessory connector. There is
+**no USB-A port**, and neither USB-C is a general-purpose host port:
+
+| External connector | What it's actually for |
+|--------------------|------------------------|
+| USB-C #1 | **Power only** (QC 2.0/3.0). No data lines wired to a USB controller. |
+| USB-C #2 | Labelled **"reserved for future use"** — no documented/working data or host-mode function. Don't plan around it. |
+| microSD slot | **Storage only**, for "external backup" (an SD card, not arbitrary peripherals). |
+
+So you **cannot** attach a normal USB peripheral (keyboard, hub, drive, dongle)
+to this box. The reason is structural, not just missing drivers: the SoC's USB is
+routed through the internal **TUSB8044** hub and is **fully consumed** by the two
+things that make the box work — the AX88179 Ethernet NIC and the USB-SATA bridge
+for the 2.5" bay (see the BOM above). There's no free, broken-out host port.
+
+If you need to attach something, the realistic options are: use the **microSD
+slot** for extra storage, put the peripheral **on the network** (USB-over-IP, a
+networked printer/serial device, etc.), or — for the truly determined — tap a
+spare **TUSB8044** port internally, which is undocumented hardware hacking, not "a
+normal USB port."
+
 ## ⚠️ Safety notes before you open one
 
 - **The battery swells.** The Plus's 7.4 V Li-ion pack is a well-known failure
