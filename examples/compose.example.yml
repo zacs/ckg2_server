@@ -1,123 +1,147 @@
 # examples/compose.example.yml — a starter stack for the reclaimed CloudKey.
 # NOT wired into any install script; copy it onto the box and edit to taste.
 #
-# It's the stack from the project notes: Arcane (Docker UI / observability),
-# Technitium (DNS), and Uptime Kuma (status monitoring — the "healthchecks but
-# nicer" piece). Every image below publishes a linux/arm/v7 variant, which is
-# what this box's 32-bit armhf userland needs. (If you ever add an image and it
-# won't pull with a manifest/architecture error, it just doesn't ship 32-bit ARM
-# — check first with:  docker manifest inspect <image> | grep -A2 arm)
+# Scoped to what makes sense to run ON THIS BOX when you already have a Proxmox
+# cluster doing the heavy lifting:
+#   - arcane-agent  : lets your cluster's Arcane MANAGER manage this Docker host
+#   - technitium    : the actual workload (DNS)
+#   - beszel-agent  : ships metrics (CPU/RAM/disk/temps/container stats) to your
+#                     central Beszel hub
+#
+# Deliberately NOT here (and why):
+#   - Arcane manager  → runs on your cluster; only the agent belongs here.
+#   - Uptime Kuma     → you already run one on the cluster. Keep it there. A
+#                       monitor co-located on this box CANNOT tell you when the
+#                       box itself dies — it dies with it. So the "shit hit the
+#                       fan, notify me" job (is the CloudKey/DNS up?) must run
+#                       OFF-box: point your cluster Kuma at this box's IP (ICMP),
+#                       its DNS (:53), and the agent ports. That survives the box
+#                       falling over; a local Kuma wouldn't. Local signals
+#                       (temps, disk, a wedged container) are covered by the
+#                       Beszel hub's alerting + autoheal below — no second Kuma.
+#   - watchtower / autoheal → optional, see the commented blocks at the bottom.
+#
+# Every active image publishes a linux/arm/v7 variant (verified), which is what
+# this box's 32-bit armhf userland needs. New image won't pull with a
+# manifest/architecture error? It just doesn't ship 32-bit ARM. Check first:
+#   docker manifest inspect <image> | grep -A2 arm
 #
 # ── Before you bring this up ──────────────────────────────────────────────────
-#  1. Run ../scripts/50-install-docker.sh first — it sets Docker's data-root to
-#     /volume/docker, picks a kernel-appropriate storage-driver (likely vfs on
-#     the stock 3.18 kernel — fine, just space-heavy), and caps container logs.
-#  2. FREE PORT 53. Technitium binds :53; on a de-UniFi'd box systemd-resolved's
-#     stub listener often already holds it. Check and disable the stub:
+#  1. Run ../scripts/50-install-docker.sh first (data-root → /volume/docker,
+#     kernel-appropriate storage-driver, capped logs).
+#  2. FREE PORT 53 for Technitium. On a de-UniFi'd box systemd-resolved's stub
+#     listener often holds it:
 #         sudo ss -ulpn 'sport = :53'
-#         # if systemd-resolved owns it:
 #         echo -e '[Resolve]\nDNSStubListener=no' | sudo tee /etc/systemd/resolved.conf.d/10-no-stub.conf
 #         sudo systemctl restart systemd-resolved
-#  3. Create the data dirs on the SATA disk (so nothing lands on the eMMC) and,
-#     for the PUID/PGID services, make them writable by that uid:
-#         sudo mkdir -p /volume/appdata/{arcane,technitium,uptime-kuma}
-#         sudo chown -R 1000:1000 /volume/appdata/arcane
-#  4. Fill in the secrets/passwords marked REPLACE_ME below. For the Arcane
-#     secrets:  openssl rand -hex 32
+#  3. Create the data dirs on the SATA disk (nothing on the eMMC):
+#         sudo mkdir -p /volume/appdata/{arcane-agent,technitium,beszel-agent}
+#  4. Fill in every REPLACE_ME (agent tokens, hub URL/key, DNS admin password).
 #
 # ── Where to put it & run it ──────────────────────────────────────────────────
 #     sudo mkdir -p /volume/stacks/core && sudo cp compose.example.yml /volume/stacks/core/compose.yml
 #     cd /volume/stacks/core && sudo docker compose up -d
 #
-# Data lives under /volume/appdata (bulk SATA disk), not the eMMC — matching the
-# storage plan in ../docs/10-storage-and-docker.md. Log rotation is handled
-# globally by daemon.json (from 50-install-docker.sh), so no per-service logging
-# blocks are needed here.
+# Log rotation is handled globally by daemon.json (from 50-install-docker.sh).
 
 name: core
 
 services:
-  # ── Docker management UI: your single pane for logs, stats, restarts ────────
-  arcane:
-    image: ghcr.io/getarcaneapp/manager:latest   # pin a version tag in production
-    container_name: arcane
+  # ── Arcane AGENT — managed by the Arcane manager on your cluster ────────────
+  # Edge mode: the agent dials OUT to the manager, so no inbound port is needed
+  # here. In the manager UI: Environments → add environment → generate a token,
+  # and use your manager's URL below. (Direct mode alternative is commented.)
+  arcane-agent:
+    image: ghcr.io/getarcaneapp/agent:latest    # pin a version tag in production
+    container_name: arcane-agent
     restart: unless-stopped
-    ports:
-      - "3552:3552"
     environment:
-      - APP_URL=http://cloudkey.lan:3552          # the URL you'll reach it on
-      - ENCRYPTION_KEY=REPLACE_ME_openssl_rand_hex_32
-      - JWT_SECRET=REPLACE_ME_openssl_rand_hex_32
-      - PUID=1000
-      - PGID=1000
-    cgroup: host                                   # reliable self-detection on upgrades
+      - EDGE_AGENT=true
+      - EDGE_TRANSPORT=poll
+      - AGENT_TOKEN=arc_REPLACE_ME
+      - MANAGER_API_URL=http://REPLACE_ME_manager_host:3552   # Arcane manager on your cluster
     volumes:
-      # Read the Docker socket to manage the host's containers. This is
-      # root-equivalent access — fine for a single-user homelab box, worth knowing.
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /volume/appdata/arcane:/app/data
-    # First login is admin / admin — change it immediately.
+      - /var/run/docker.sock:/var/run/docker.sock   # root-equivalent access; expected for management
+      - /volume/appdata/arcane-agent:/app/data
+    # ── Direct mode instead (manager connects IN on 3553) — swap for the above:
+    # environment:
+    #   - AGENT_MODE=true
+    #   - EDGE_TRANSPORT=poll
+    #   - AGENT_TOKEN=arc_REPLACE_ME
+    #   - MANAGER_API_URL=http://REPLACE_ME_manager_host:3552
+    # ports:
+    #   - "3553:3553"
 
-  # ── DNS server ──────────────────────────────────────────────────────────────
+  # ── DNS server (the actual workload) ────────────────────────────────────────
   technitium:
-    image: technitium/dns-server:latest            # pin a version tag in production
+    image: technitium/dns-server:latest          # pin a version tag in production
     container_name: technitium
     restart: unless-stopped
-    # A DNS server benefits from host networking (it sees real client IPs, and
-    # you avoid juggling every DNS port). If you prefer that, delete the whole
-    # `ports:` block and uncomment the next line:
+    # A DNS server benefits from host networking (real client IPs, no port
+    # juggling). To use it, delete the `ports:` block and uncomment:
     # network_mode: host
     ports:
       - "5380:5380/tcp"   # web admin console
       - "53:53/udp"       # DNS
       - "53:53/tcp"       # DNS
-      # - "853:853/tcp"   # DNS-over-TLS   (uncomment if you use it)
-      # - "443:443/tcp"   # DNS-over-HTTPS (uncomment if you use it)
-      # - "67:67/udp"     # DHCP           (uncomment if you run DHCP here)
+      # - "853:853/tcp"   # DNS-over-TLS
+      # - "443:443/tcp"   # DNS-over-HTTPS
+      # - "67:67/udp"     # DHCP (if you serve it from here)
     environment:
       - DNS_SERVER_DOMAIN=cloudkey.lan
       - DNS_SERVER_ADMIN_PASSWORD=REPLACE_ME
     volumes:
       - /volume/appdata/technitium:/etc/dns
     sysctls:
-      # Lets the container hold the larger UDP buffers a busy resolver wants.
       - net.ipv4.ip_local_port_range=1024 65000
-    # Query logging is the #1 write source for a DNS box — it now lives under
-    # /volume (off the eMMC), but still trim retention in the Technitium UI.
+    # Query logging is the #1 write source — it's on /volume now (off the eMMC),
+    # but still trim retention in the Technitium UI.
 
-  # ── Status monitoring / uptime dashboard (the "better healthchecks") ────────
-  uptime-kuma:
-    image: louislam/uptime-kuma:1                  # :1 tracks the stable 1.x line
-    container_name: uptime-kuma
+  # ── Beszel AGENT — reports this box's metrics to your central Beszel hub ─────
+  # Great fit for a fanless box: the hub can alert on temperature, disk-full, and
+  # container-down. Get KEY + TOKEN from the hub (add system / Settings → Tokens).
+  beszel-agent:
+    image: henrygd/beszel-agent:latest           # pin a version tag in production
+    container_name: beszel-agent
     restart: unless-stopped
-    ports:
-      - "3001:3001"
+    network_mode: host                            # needs host net for interface stats
     volumes:
-      - /volume/appdata/uptime-kuma:/app/data
+      - /volume/appdata/beszel-agent:/var/lib/beszel-agent
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # read-only: container stats only
+    environment:
+      LISTEN: 45876
+      KEY: "REPLACE_ME_hub_public_key"
+      TOKEN: "REPLACE_ME_hub_token"
+      HUB_URL: "http://REPLACE_ME_beszel_hub:8090"
 
-  # ── OPTIONAL: auto-restart containers that report unhealthy ─────────────────
-  # A lightweight "watchdog": watches for containers with a HEALTHCHECK that go
-  # unhealthy and restarts them. Verify armv7 before enabling:
-  #   docker manifest inspect willfarrell/autoheal | grep -A2 arm
+  # ── OPTIONAL: autoheal — restart a container that reports UNHEALTHY ──────────
+  # Only does anything for containers that DEFINE a healthcheck and go unhealthy.
+  # `restart: unless-stopped` already covers a crashed process; autoheal adds the
+  # "process is alive but wedged" case. Worth it for DNS you depend on — but you
+  # must add a healthcheck to technitium for it to fire (verify the probe binary
+  # exists in that image first). Verify the autoheal image is armv7 before use.
   # autoheal:
   #   image: willfarrell/autoheal:latest
   #   container_name: autoheal
   #   restart: unless-stopped
   #   environment:
-  #     - AUTOHEAL_CONTAINER_LABEL=all   # or label specific services autoheal=true
+  #     - AUTOHEAL_CONTAINER_LABEL=all   # or label services with autoheal=true
   #   volumes:
   #     - /var/run/docker.sock:/var/run/docker.sock
 
-  # ── OPTIONAL: automatic image updates ───────────────────────────────────────
-  # Handy, but auto-updating on this old-kernel/armhf box can surprise you (a new
-  # image that needs a newer kernel just stops working). Pin tags and update
-  # deliberately, or enable this with eyes open. Verify armv7 as above.
+  # ── OPTIONAL: watchtower — auto-update images ───────────────────────────────
+  # Skip it here. On this 3.18/armhf box an unattended pull can grab an image
+  # that needs a newer kernel and silently break. With the Arcane manager already
+  # driving this host from your cluster, update DELIBERATELY from there (pin tags,
+  # pull when you're watching) instead of auto-applying. If you only want to KNOW
+  # about updates, run watchtower with WATCHTOWER_MONITOR_ONLY=true (notify, don't
+  # apply) — but even that is arguably redundant with Arcane.
   # watchtower:
   #   image: containrrr/watchtower:latest
   #   container_name: watchtower
   #   restart: unless-stopped
   #   environment:
-  #     - WATCHTOWER_CLEANUP=true
-  #     - WATCHTOWER_SCHEDULE=0 0 4 * * *   # 4am daily
+  #     - WATCHTOWER_MONITOR_ONLY=true
+  #     - WATCHTOWER_SCHEDULE=0 0 4 * * *
   #   volumes:
   #     - /var/run/docker.sock:/var/run/docker.sock

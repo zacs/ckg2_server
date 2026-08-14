@@ -186,7 +186,7 @@ ckg2_server/
 │   ├── cklcd.env.example         config for cklcd.service (→ /etc/cklcd.env)
 │   └── docker-daemon.json.example  Docker data-root + log-cap config (→ /etc/docker/daemon.json)
 ├── examples/
-│   └── compose.example.yml       paste-in Docker stack (Arcane + Technitium + Uptime Kuma), all armv7
+│   └── compose.example.yml       paste-in Docker stack (Arcane agent + Technitium + Beszel agent), all armv7
 └── docs/
     ├── 01-hardware.md            teardown-level BOM + the APQ8053 correction
     ├── 02-serial-console.md      UART header, adapter, baud
