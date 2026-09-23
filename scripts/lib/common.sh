@@ -50,7 +50,10 @@ ck_model() {
 # (e.g. accidentally on a laptop). Checks for the apq8053 hostname/uname marker.
 assert_cloudkey() {
   local u; u="$(uname -a 2>/dev/null)"
-  if [[ "$u" == *apq8053* || "$(cat /proc/device-tree/model 2>/dev/null)" == *loud* ]]; then
+  # /proc/device-tree/model is NUL-terminated; strip the null so command
+  # substitution doesn't warn "ignored null byte in input".
+  local model; model="$(tr -d '\000' < /proc/device-tree/model 2>/dev/null || true)"
+  if [[ "$u" == *apq8053* || "$model" == *loud* ]]; then
     return 0
   fi
   warn "this does not look like a CloudKey (no apq8053 marker in uname)."

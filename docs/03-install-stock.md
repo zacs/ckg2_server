@@ -39,9 +39,14 @@ your laptop — the liveness checks need to run locally).
 ```bash
 cd ckg2_server/scripts
 
-# 0. SAFETY NET FIRST. Image the eMMC to the internal disk or a USB stick so you
-#    can always get back. (If the SATA disk isn't mounted yet, use a USB stick.)
-sudo ./00-preflight-backup.sh /mnt/usb/emmc-backup.img
+# 0. SAFETY NET FIRST. Image the eMMC so you can always get back. This box has
+#    NO usable USB port and the SATA disk isn't mounted yet, so back up over the
+#    network. Easiest: run this line FROM your workstation to pull the image:
+#        ssh root@<cloudkey> 'gzip -1 < /dev/mmcblk0' > cloudkey-emmc.img.gz
+#    Or push it from the box with the script's stdout mode:
+sudo ./00-preflight-backup.sh --stdout | gzip -1 | ssh you@nas 'cat > ck-emmc.img.gz'
+#    (If you've already mounted the SATA disk, you can instead write to a file
+#     there — but 30-mount-storage.sh erases that disk later, so copy it off.)
 
 # 1. LOCK IN YOUR ACCESS before removing anything. You'll still be root with the
 #    same password afterwards (it's in /etc/shadow, not the UniFi DB), but don't
