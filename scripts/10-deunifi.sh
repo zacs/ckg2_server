@@ -40,6 +40,7 @@ cd "$(dirname "$0")"
 
 APPLY=0
 ASSUME_YES=0
+PURGE_FAILURES=0   # set if any batch's apt purge fails (e.g. lock contention)
 for a in "$@"; do
   case "$a" in
     --apply) APPLY=1 ;;
@@ -136,21 +137,75 @@ disable_units() {
   done
 }
 
+# apt_lock_holder — print PIDs holding any apt/dpkg lock (empty if free).
+# Uses fuser, then lsof, then a /proc fallback so it works on stripped images.
+APT_LOCKS="/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock /var/lib/apt/lists/lock"
+apt_lock_holder() {
+  if command -v fuser >/dev/null 2>&1; then
+    fuser $APT_LOCKS 2>/dev/null
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -t $APT_LOCKS 2>/dev/null
+  else
+    local f lk=/var/lib/dpkg/lock-frontend
+    for f in /proc/[0-9]*/fd/*; do
+      [[ "$(readlink -f "$f" 2>/dev/null)" == "$lk" ]] && { echo held; return; }
+    done
+  fi
+}
+
+# wait_apt_lock [max_seconds] — block until the apt/dpkg lock is free. Debian's
+# apt-daily / unattended-upgrades grabs it shortly after boot; that's what made
+# every purge fail with "Could not get lock". We WAIT (never kill a running apt —
+# that corrupts dpkg) up to a timeout, then bail with instructions.
+wait_apt_lock() {
+  local waited=0 max="${1:-600}"
+  [[ -n "$(apt_lock_holder)" ]] && \
+    warn "apt/dpkg lock is held (background apt-daily/unattended-upgrades?). Waiting up to ${max}s…"
+  while [[ -n "$(apt_lock_holder)" ]]; do
+    sleep 5; waited=$((waited+5))
+    if (( waited >= max )); then
+      err "apt lock STILL held after ${max}s. See what has it, let it finish, then re-run:"
+      err "    sudo fuser -v /var/lib/dpkg/lock-frontend   # or: sudo lsof /var/lib/dpkg/lock-frontend"
+      err "    sudo $0 --apply"
+      return 1
+    fi
+  done
+  return 0
+}
+
+# stop_apt_background — stop Debian's periodic apt TIMERS so they don't grab the
+# lock mid-purge. Timers only; we don't kill an in-flight run (wait_apt_lock does
+# that safely). They re-enable themselves on the next boot.
+stop_apt_background() {
+  systemctl stop apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
+}
+
 purge_batches() {
   local batch remaining
   for batch in "${BATCHES[@]}"; do
     remaining=""
     for p in $batch; do pkg_installed "$p" && remaining+=" $p"; done
     [[ -z "$remaining" ]] && continue
+
+    # Re-check the lock before each batch (a periodic run can start mid-way).
+    wait_apt_lock || { PURGE_FAILURES=1; err "aborting remaining batches — lock never freed."; return 1; }
+
     log "purging:$remaining"
     if [[ "$APPLY" == "1" ]]; then
-      DEBIAN_FRONTEND=noninteractive apt-get purge -y $remaining || warn "batch had errors: $remaining"
+      # DPkg::Lock::Timeout makes newer apt wait for the lock instead of failing;
+      # harmlessly ignored by older apt (which is why we also wait_apt_lock above).
+      if DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y $remaining; then
+        ok "batch purged."
+      else
+        PURGE_FAILURES=1
+        warn "batch FAILED (see apt error above): $remaining"
+      fi
       if ! ssh_alive; then
         err "LIVENESS CHECK FAILED after this batch: sshd is not accepting connections."
         err "STOP HERE. Do not run more. Reconnect via serial/recovery if you lose this session."
         exit 1
       fi
-      ok "batch done; sshd still alive."
+      log "sshd still alive."
     fi
   done
 }
@@ -170,8 +225,26 @@ main() {
   fi
 
   confirm "Proceed to PURGE the UniFi layer and disable its services?" || die "aborted."
+
+  # Keep Debian's periodic apt from stealing the dpkg lock, and wait for any run
+  # already in flight (the classic post-boot "Could not get lock" cause).
+  stop_apt_background
+  wait_apt_lock || die "apt lock never freed — nothing purged. Resolve and re-run."
+
   disable_units
   purge_batches
+
+  # If any batch failed, STOP: don't autoremove, don't claim success, don't tell
+  # the user to reboot with the UniFi layer still half-present.
+  if [[ "$PURGE_FAILURES" != "0" ]]; then
+    echo
+    err "PURGE INCOMPLETE — one or more batches failed (see errors above)."
+    err "The box is unchanged package-wise and safe, but the UniFi layer is NOT removed."
+    err "Fix the cause (usually a background apt run holding the lock), then re-run:"
+    err "    sudo $0 --apply"
+    err "Do NOT reboot expecting a clean box until this reports success."
+    exit 1
+  fi
 
   # Autoremove sweeps up orphaned deps — but simulate_gate never saw it, so guard
   # it the same way: skip it entirely if it would drag out a load-bearing package.
