@@ -93,17 +93,30 @@ else
 fi
 
 echo; echo "== panel =="
-if [[ -e /dev/fb0 ]] && command -v cklcd >/dev/null 2>&1; then
-  log "$(cklcd probe 2>&1 || echo 'cklcd probe failed')"
+# Report the framebuffer and the LCD daemon independently (they're separate
+# concerns — the panel isn't taken over until the LCD step).
+if [[ -e /dev/fb0 ]]; then
+  ok "framebuffer /dev/fb0 present"
+  if command -v cklcd >/dev/null 2>&1; then
+    log "$(cklcd probe 2>&1 || echo 'cklcd probe failed')"
+  else
+    log "cklcd not installed yet — run 40-install-lcd.sh or 41-install-cloudkey.sh"
+  fi
 else
-  warn "no /dev/fb0 or cklcd not installed"
+  warn "/dev/fb0 not present. Before the LCD step this may be normal; if it persists, check:"
+  warn "   ls /dev/fb* ; cat /proc/fb ; dmesg | grep -iE 'fb|ssd|oled|drm'"
 fi
 
 echo; echo "== thermals (fanless — keep an eye on this) =="
+# Many Qualcomm thermal zones are unpopulated and read 0°C — skip those.
+skipped=0
 for z in /sys/class/thermal/thermal_zone*/temp; do
   [[ -r "$z" ]] || continue
-  t=$(cat "$z" 2>/dev/null); printf '   %s: %s°C\n' "$(dirname "$z" | xargs basename)" "$((t/1000))"
+  t=$(cat "$z" 2>/dev/null); c=$((t/1000))
+  if (( c == 0 )); then skipped=$((skipped+1)); continue; fi
+  printf '   %s: %s°C\n' "$(dirname "$z" | xargs basename)" "$c"
 done
+(( skipped > 0 )) && printf '   (%d unpopulated 0°C zones hidden)\n' "$skipped"
 
 echo
 if [[ "$fail" -eq 0 ]]; then ok "All $pass checks passed."; else err "$fail check(s) failed, $pass passed."; fi
