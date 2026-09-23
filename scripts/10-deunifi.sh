@@ -103,8 +103,11 @@ simulate_gate() {
     return 2
   fi
   log "Simulating purge to check for dangerous cascades…"
+  # apt marks a purge as `Purg <pkg>` and a plain removal as `Remv <pkg>`; match
+  # BOTH (matching only Remv silently misses every purge — and would make this
+  # brick-guard inspect an empty set). LC_ALL=C keeps the tokens stable.
   local sim
-  sim="$(apt-get -s purge $targets 2>/dev/null | awk '/^Remv /{print $2}')"
+  sim="$(LC_ALL=C apt-get -s purge $targets 2>/dev/null | awk '/^(Remv|Purg) /{print $2}')"
   local bad; bad="$(printf '%s\n' "$sim" | grep -E "$FORBIDDEN_RE" || true)"
   if [[ -n "$bad" ]]; then
     err "ABORT: the purge would ALSO remove forbidden/bricking package(s):"
