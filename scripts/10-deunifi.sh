@@ -54,7 +54,9 @@ assert_cloudkey
 # --- never remove these; their removal bricks the box ------------------------
 # Guard is by package NAME so it holds on both models (the base-files variant
 # differs: cloudkey-plus-apq8053-base-files vs cloudkey-g2-apq8053-base-files).
-FORBIDDEN_RE='^(ck-ui|ubnt-tools|cloudkey-.*-base-files|.*-initramfs.*|linux-image-.*)$'
+# uck-tools is CloudKey-specific hardware tooling of unknown criticality — treat
+# it as load-bearing too (never let a cascade drag it out).
+FORBIDDEN_RE='^(ck-ui|ubnt-tools|uck-tools|cloudkey-.*-base-files|.*-initramfs.*|linux-image-.*)$'
 
 # --- packages to purge (only those actually installed are acted on) ----------
 PACKAGES=(
@@ -86,7 +88,7 @@ UNITS=(
   unifi.service unifi-core.service unifi-directory.service
   unifi-identity-update.service uos-agent.service uos-discovery-client.service
   usd.service usdbd.service ubnt-dpkg-restore.service
-  ck-splash-reboot.service ck-splash-shutdown.service
+  ck-splash.service ck-splash-reboot.service ck-splash-shutdown.service
 )
 
 installed_targets() {
@@ -170,7 +172,18 @@ main() {
   confirm "Proceed to PURGE the UniFi layer and disable its services?" || die "aborted."
   disable_units
   purge_batches
-  DEBIAN_FRONTEND=noninteractive apt-get -y --purge autoremove || true
+
+  # Autoremove sweeps up orphaned deps — but simulate_gate never saw it, so guard
+  # it the same way: skip it entirely if it would drag out a load-bearing package.
+  local auto_bad
+  auto_bad="$(LC_ALL=C apt-get -s --purge autoremove 2>/dev/null | awk '/^(Remv|Purg) /{print $2}' | grep -E "$FORBIDDEN_RE" || true)"
+  if [[ -n "$auto_bad" ]]; then
+    warn "SKIPPING autoremove — it would remove load-bearing package(s):"
+    printf '        %s\n' $auto_bad >&2
+    warn "Orphaned deps left in place are harmless; removing those is not. Skipped."
+  else
+    DEBIAN_FRONTEND=noninteractive apt-get -y --purge autoremove || true
+  fi
 
   echo
   ok "UniFi application layer removed and supervisor/watchdog units disabled."
