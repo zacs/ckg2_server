@@ -13,8 +13,9 @@ supervisor that reboots the box when those apps are unhealthy. "Installing Linux
 here means **removing the UniFi layer and its supervisor** and keeping the Debian
 underneath — which you then modernize and use as a server.
 
-What you keep: the stock aarch64 vendor kernel (`3.18.44-ui-qcom`) and the armhf
-Debian userland. What you remove: UniFi Network, Protect, MongoDB, the UniFi-OS
+What you keep: the stock aarch64 vendor kernel (`3.18.44-ui-qcom`) and the Debian
+userland (arm64 on current bullseye firmware; armhf on older). What you remove:
+UniFi Network, Protect, MongoDB, the UniFi-OS
 agents, and the watchdog/auto-updater that cause the reboot behaviour.
 
 > Trade-off, stated plainly: you stay on Ubiquiti's old 3.18 kernel. It is rock

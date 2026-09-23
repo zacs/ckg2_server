@@ -108,26 +108,28 @@ to `data-root`. That's covered by the journald cap in the rehome section below.)
 - **Compose:** put the project under `/volume` (e.g. `/volume/stacks/myapp`) and
   use relative bind paths, or name your volumes and let `data-root` place them.
   There's a ready-to-paste starter stack (Technitium DNS + Uptime Kuma as an
-  out-of-band watcher + Arcane/Beszel agents, all armv7, data under `/volume`) in
+  out-of-band watcher + Arcane/Beszel agents, arm64, data under `/volume`) in
   [examples/compose.example.yml](../examples/compose.example.yml) — it's just an
   example, not wired into any install script.
 
-### Reality check: old kernel + 32-bit userland
+### Reality check: old kernel (but a modern 64-bit userland)
 
-Docker runs on this box, but the stock **3.18 vendor kernel** and **armhf (32-bit)
-userland** impose two caveats the installer handles for you:
+Docker runs on this box; the one real caveat is the kernel, not the arch:
 
 - **Storage driver.** Modern Docker prefers `overlay2`, which really wants a
-  kernel ≥ 4.0. On the 3.18 kernel `overlay2` may be unavailable, in which case
-  Docker falls back to the `vfs` driver. `vfs` has no copy-on-write (each layer
-  is a full copy, so images use more space and pulls are slower) — but it is
-  **correct and reliable**, and because `data-root` is on the roomy SATA disk,
-  the extra space is fine. The script detects what the kernel supports and picks
-  accordingly, and tells you which it chose.
-- **Architecture.** `dpkg --print-architecture` is `armhf`, so you get 32-bit
-  `arm/v7` container images. Most official images publish an `arm/v7` variant,
-  but not all — if a pull fails with a manifest/architecture error, that image
-  simply doesn't ship 32-bit ARM. This is a property of the box, not the setup.
+  kernel ≥ 4.0. On the stock **3.18 vendor kernel** `overlay2` may be
+  unavailable, in which case Docker falls back to the `vfs` driver. `vfs` has no
+  copy-on-write (each layer is a full copy, so images use more space and pulls
+  are slower) — but it is **correct and reliable**, and because `data-root` is on
+  the roomy SATA disk, the extra space is fine. The script detects what the
+  kernel supports and picks accordingly, and tells you which it chose.
+- **Architecture — good news.** On current firmware `dpkg --print-architecture`
+  is **`arm64`** (Debian 11 bullseye on the aarch64 kernel), so you use **arm64
+  container images** — the best-supported ARM architecture; effectively
+  everything publishes it. (Older CloudKey firmware shipped a 32-bit **armhf**
+  userland, limited to `arm/v7` images — check yours with
+  `dpkg --print-architecture`.) If a pull ever fails with a manifest/architecture
+  error, that image simply doesn't ship your arch — rare on arm64.
 
 ## Rehoming /home, /srv, and /var/log
 

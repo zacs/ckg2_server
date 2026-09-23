@@ -128,8 +128,10 @@ custom content: [docs/05-lcd.md](docs/05-lcd.md).
 Full teardown-level detail in [docs/01-hardware.md](docs/01-hardware.md). The
 highlights that affect how you use it:
 
-- **SoC:** Qualcomm APQ8053 (Snapdragon 625), 8× Cortex-A53. **aarch64 kernel,
-  32-bit armhf userland** — verify with `uname -m` and `dpkg --print-architecture`.
+- **SoC:** Qualcomm APQ8053 (Snapdragon 625), 8× Cortex-A53. **aarch64 kernel**;
+  userland is firmware-dependent — **arm64** on current bullseye firmware, armhf
+  on older. Check with `uname -m` and `dpkg --print-architecture` (it decides
+  your container/binary arch).
 - **RAM / flash:** 3 GB (Plus) / 2 GB; 32 GB eMMC (`/dev/mmcblk0`).
 - **NIC and disk are both USB** behind an internal hub: Ethernet is an ASIX
   AX88179 (`ax88179_178a`); the 2.5" bay is a USB-SATA bridge showing up as
@@ -188,7 +190,7 @@ ckg2_server/
 │   ├── cklcd.env.example         config for cklcd.service (→ /etc/cklcd.env)
 │   └── docker-daemon.json.example  Docker data-root + log-cap config (→ /etc/docker/daemon.json)
 ├── examples/
-│   └── compose.example.yml       paste-in stack: Technitium DNS + Uptime Kuma (out-of-band watcher) + Arcane/Beszel agents, all armv7
+│   └── compose.example.yml       paste-in stack: Technitium DNS + Uptime Kuma (out-of-band watcher) + Arcane/Beszel agents (arm64)
 └── docs/
     ├── 01-hardware.md            teardown-level BOM + the APQ8053 correction
     ├── 02-serial-console.md      UART header, adapter, baud

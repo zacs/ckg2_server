@@ -42,12 +42,15 @@
 #                     cluster's monitoring curl them on a schedule → catches
 #                     "cluster host is up but its monitoring is wedged/silent."
 #
-# All active images publish linux/arm/v7 (verified) for this box's armhf
-# userland. Check any image you add:  docker manifest inspect <img> | grep -A2 arm
+# ARCH: current UniFi OS firmware is 64-bit (Debian 11 bullseye, aarch64 kernel),
+# so `dpkg --print-architecture` is arm64 and Docker pulls arm64 images by default
+# — the best-supported ARM arch, so almost everything Just Works. (On older armhf
+# firmware you'd be limited to arm/v7 instead — check with dpkg.) All images here
+# publish arm64. Sanity-check any image you add: docker manifest inspect <img> | grep -A2 arch
 # (Lighter watcher alternatives if you want minimal footprint: Gatus (declarative,
-#  tiny) or self-hosted Healthchecks (purpose-built dead-man's-switch). Verify
-#  their armv7 support first — Uptime Kuma is the batteries-included default and
-#  matches the tooling you already run on the cluster.)
+#  tiny) or self-hosted Healthchecks (purpose-built dead-man's-switch) — both
+#  ship arm64. Uptime Kuma is the batteries-included default and matches the
+#  tooling you already run on the cluster.)
 #
 # ── Before you bring this up ──────────────────────────────────────────────────
 #  1. Run ../scripts/50-install-docker.sh first (data-root -> /volume/docker,
@@ -153,7 +156,7 @@ services:
   # `restart: unless-stopped` already covers a crashed process; autoheal adds the
   # "alive but wedged" case. Worth it for DNS you depend on — but you must add a
   # healthcheck to technitium for it to fire (verify the probe binary exists in
-  # that image). Verify the autoheal image is armv7 before use.
+  # that image). Verify the autoheal image ships arm64 before use.
   # autoheal:
   #   image: willfarrell/autoheal:latest
   #   container_name: autoheal
@@ -164,7 +167,7 @@ services:
   #     - /var/run/docker.sock:/var/run/docker.sock
 
   # ── OPTIONAL: watchtower — auto-update images ───────────────────────────────
-  # Skip it here. On this 3.18/armhf box an unattended pull can grab an image
+  # Skip it here. On this old-kernel (3.18) box an unattended pull can grab an image
   # that needs a newer kernel and silently break it. Arcane already manages this
   # host from your cluster — update DELIBERATELY from there. If you only want to
   # KNOW about updates, run watchtower with WATCHTOWER_MONITOR_ONLY=true.

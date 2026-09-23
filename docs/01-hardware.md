@@ -25,7 +25,7 @@ is `3.18.44-ui-qcom`, and the flash partitions are Qualcomm's (`sbl1`, `devcfg`,
 | Part | Component | Notes |
 |------|-----------|-------|
 | **SoC** | Qualcomm **APQ8053** (Snapdragon 625) | 8× Cortex-A53 up to 2.0 GHz, 14 nm, ARMv8-A. Adreno 506 GPU (unused, headless). |
-| **Kernel arch** | **aarch64** (64-bit) | …but the **userland is 32-bit armhf** (`dpkg --print-architecture` → `armhf`). Verify both: `uname -m` and `dpkg --print-architecture`. |
+| **Kernel arch** | **aarch64** (64-bit) | **Userland is firmware-dependent**: current UniFi OS (Debian 11 *bullseye*) ships a **64-bit arm64** userland (`dpkg --print-architecture` → `arm64`); older firmware was 32-bit **armhf**. Always check yours: `uname -m` **and** `dpkg --print-architecture`. This decides which container/binary arch you use. |
 | **RAM** | **3 GB** LPDDR3 (Plus); 2 GB (non-Plus) | Part of an eMCP package (RAM+eMMC combined): Samsung `KMGX6001BM` on Plus, SK hynix `H9TQ26ABJTAC` on non-Plus. |
 | **Flash** | **32 GB eMMC** → `/dev/mmcblk0` (~29 GiB) | A second small region `/dev/mmcblk1` (~1.9 GiB) is also present. |
 | **NIC** | **ASIX AX88179** USB 3.0 → Gigabit Ethernet | Driver `ax88179_178a`. **The NIC is on USB**, not PCIe/native MAC. |
@@ -87,7 +87,7 @@ Run these on your unit and compare to the table:
 
 ```bash
 uname -srm                      # kernel + arch (expect aarch64, 3.18.44-ui-qcom)
-dpkg --print-architecture       # userland arch (expect armhf)
+dpkg --print-architecture       # userland arch (arm64 on bullseye firmware; armhf on older)
 cat /proc/cpuinfo | grep -c ^processor   # core count (expect 8)
 free -h                         # RAM
 lsblk                           # mmcblk0 (eMMC) + sda (USB-SATA disk)
