@@ -63,7 +63,9 @@ log "eMMC: $(lsblk -dno NAME,SIZE /dev/mmcblk0 2>/dev/null)"
 # Rehomed dirs (35-rehome-storage.sh) — anything still on the eMMC keeps wearing it.
 for d in /home /srv /var/log; do
   src="$(findmnt -rno SOURCE "$d" 2>/dev/null || true)"
-  if [[ -L "$d" ]]; then
+  if [[ ! -e "$d" ]]; then
+    log "$d does not exist on this image (nothing to rehome)"
+  elif [[ -L "$d" ]]; then
     log "$d is a symlink -> $(readlink "$d")"
   elif [[ -n "$src" ]] && ! on_os_storage "$d"; then
     ok "$d rehomed (from $src)"
@@ -100,10 +102,12 @@ echo; echo "== panel =="
 # concerns — the panel isn't taken over until the LCD step).
 if [[ -e /dev/fb0 ]]; then
   ok "framebuffer /dev/fb0 present"
-  if command -v cklcd >/dev/null 2>&1; then
+  if systemctl is-active --quiet cloudkey.service 2>/dev/null; then
+    log "driven by the jnovack cloudkey daemon (journalctl -u cloudkey for its resolution line)"
+  elif command -v cklcd >/dev/null 2>&1; then
     log "$(cklcd probe 2>&1 || echo 'cklcd probe failed')"
   else
-    log "cklcd not installed yet — run 40-install-lcd.sh or 41-install-cloudkey.sh"
+    log "no panel daemon yet (stock ck-ui still owns it) — run 41-install-cloudkey.sh or 40-install-lcd.sh"
   fi
 else
   warn "/dev/fb0 not present. Before the LCD step this may be normal; if it persists, check:"
