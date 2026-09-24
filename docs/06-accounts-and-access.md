@@ -1,4 +1,4 @@
-# 09 — Accounts, credentials & not locking yourself out
+# 06 — Accounts, credentials & not locking yourself out
 
 Short version: **after de-UniFi you are still `root`, with the same SSH password
 you had before.** But *how* that works — and how to not get locked out during the
@@ -36,10 +36,9 @@ auth were backed by the UniFi database or a UniFi PAM module, purging Mongo and
 - The password is now **yours to manage** with `passwd`. It was previously
   *applied* by a UniFi agent; with the agent gone, nothing re-applies or resets
   it — it just persists.
-- **Recovery Mode is always `root` / `ubnt`** ([06-recovery.md](06-recovery.md)),
-  independent of all of the above. That plus a serial console
-  ([02-serial-console.md](02-serial-console.md)) is your out-of-band fallback if
-  you ever lose the main password.
+- **Recovery Mode is always `root` / `ubnt`** ([04-recovery.md](04-recovery.md)),
+  independent of all of the above. That's your out-of-band fallback if you ever
+  lose the main password (it needs physical access to the reset button).
 
 ## The one real risk: locking yourself out during the transition
 
@@ -125,7 +124,7 @@ sshd on a config that fails the test.
 ## Does the fstab-rewriting hook touch credentials?
 
 No. The base-files boot hooks that reset `/etc/fstab`
-([07-watchdog-and-persistence.md](07-watchdog-and-persistence.md)) template a
+([05-watchdog-and-persistence.md](05-watchdog-and-persistence.md)) template a
 handful of config files — not `/etc/shadow`, `/etc/passwd`, or
 `/root/.ssh/authorized_keys`. Your password and keys persist across reboots. As
 always: prove it by actually rebooting and logging in again, which step 4 above

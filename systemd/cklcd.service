@@ -1,6 +1,6 @@
 [Unit]
 Description=CloudKey front-panel status display (cklcd)
-Documentation=https://github.com/zacs/ckg2_server/blob/main/docs/05-lcd.md
+Documentation=https://github.com/zacs/ckg2_server/blob/main/docs/03-lcd.md
 After=network-online.target
 Wants=network-online.target
 # The stock UI daemon and the jnovack daemon (41-install-cloudkey.sh) drive the

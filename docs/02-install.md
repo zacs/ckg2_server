@@ -1,7 +1,6 @@
-# 03 — Install path A: reclaim stock Debian (recommended)
+# 02 — Install: reclaim the stock Debian
 
-**This is the path to use unless you have a specific reason not to.** No
-disassembly, no serial adapter, no bootloader work, low brick risk, and it
+No disassembly, no serial adapter, no bootloader work, low brick risk — and it
 satisfies every goal: a persistent Linux server with the SATA disk, PoE, and the
 LCD all working.
 
@@ -19,16 +18,17 @@ UniFi Network, Protect, MongoDB, the UniFi-OS
 agents, and the watchdog/auto-updater that cause the reboot behaviour.
 
 > Trade-off, stated plainly: you stay on Ubiquiti's old 3.18 kernel. It is rock
-> solid and every peripheral works, but it's old. If you want a modern mainline
-> kernel, that's the reflash/mainline path — and it's still experimental. See
-> [08-mainline-kernel.md](08-mainline-kernel.md).
+> solid and every peripheral works, but it's old — which caps how far the
+> userland can be modernized ([below](#modernizing-the-userland-optional)) and
+> rules out containers, so services run directly on the OS
+> ([07-storage.md](07-storage.md#running-your-own-services)).
 
 ## Before you start
 
 - Get in over SSH. On stock UniFi OS, enable SSH in the UniFi OS settings (or the
   device's local portal) and set a password. Then `ssh root@<ip>` (or your admin
   user).
-- **Read [07-watchdog-and-persistence.md](07-watchdog-and-persistence.md)** — it
+- **Read [05-watchdog-and-persistence.md](05-watchdog-and-persistence.md)** — it
   explains the two reboot mechanisms and the `/etc/fstab`-gets-rewritten gotcha.
 - Copy this repo onto the box: `git clone` it, or `scp -r` the folder over.
 
@@ -53,7 +53,7 @@ sudo ./00-preflight-backup.sh --stdout | gzip -1 | ssh you@nas 'cat > cloudkey-e
 
 # 1. LOCK IN YOUR ACCESS before removing anything. You'll still be root with the
 #    same password afterwards (it's in /etc/shadow, not the UniFi DB), but don't
-#    bet your only way in on it. See docs/09-accounts-and-access.md.
+#    bet your only way in on it. See docs/06-accounts-and-access.md.
 sudo passwd root                               # set a KNOWN root password
 #    Install your key FROM YOUR WORKSTATION (that's where the .pub file lives):
 #        ssh-copy-id root@<ip>
@@ -91,31 +91,31 @@ sudo ./41-install-cloudkey.sh                  # featured: jnovack daemon (LEDs,
 #   -- or the lightweight text-only tool instead --
 # sudo ./40-install-lcd.sh                      # this repo's minimal cklcd
 
-# 9. (optional) Keep writes off the soldered eMMC — see docs/10-storage-and-docker.md:
+# 9. (optional) Keep writes off the soldered eMMC — see docs/07-storage.md:
 sudo ./35-rehome-storage.sh                    # move /home + /srv + /var/log onto /volume
-sudo ./50-install-docker.sh                    # EXPERIMENTAL on this kernel — smoke-test it
 
 # 10. Final health check:
 sudo ./99-verify.sh
 ```
 
 You now have a plain Debian box with `/volume` for bulk data, a firewall, a
-status screen, and no UniFi reboots. Install whatever you like (`apt install …`,
-Docker, etc.).
+status screen, and no UniFi reboots. Install whatever you like with
+`apt install …` or an app's own Linux installer — see
+[07-storage.md](07-storage.md#running-your-own-services) for where its data
+should go and how to make it wait for the disk at boot.
 
-> **Where does the OS live? Where do Docker's runtime and volumes go?** The OS
-> stays on the **eMMC** (`/dev/mmcblk0`, `/`) — Path A never reinstalls it. The
-> SATA disk (`/dev/sda` → `/volume`) is bulk storage and the place for anything
-> write-heavy. Docker's runtime defaults to `/var/lib/docker` on the eMMC; step 9
-> relocates it to `/volume/docker` and caps container logs, and can rehome
+> **Where does the OS live? Where does my data go?** The OS stays on the **eMMC**
+> (`/dev/mmcblk0`, `/`) — nothing here reinstalls it. The SATA disk
+> (`/dev/sda` → `/volume`) is bulk storage and the place for anything
+> write-heavy: service data under `/volume/appdata/<app>`, and step 9 rehomes
 > `/home`, `/srv`, and `/var/log` too. Full explanation:
-> [10-storage-and-docker.md](10-storage-and-docker.md).
+> [07-storage.md](07-storage.md).
 
 > **Will I still be root with my old password?** Yes. The SSH/root password lives
 > in `/etc/shadow`, and the purge doesn't touch it; the account UniFi keeps in
 > MongoDB is the *web-GUI* admin, which you're discarding. Step 1 exists only so a
 > half-remembered password or a UniFi-managed credential can't strand you
-> mid-install. Full story: [09-accounts-and-access.md](09-accounts-and-access.md).
+> mid-install. Full story: [06-accounts-and-access.md](06-accounts-and-access.md).
 
 ## What each script does (and the safety built in)
 
@@ -129,7 +129,6 @@ Docker, etc.).
 | `35-rehome-storage.sh` | Bind-mount `/home`, `/srv`, `/var/log` onto `/volume/rehome/` | Copies (never deletes) originals; requires `/volume` on the SATA disk; skips symlinked or already-mounted targets; `nofail` bind units (survive a dead disk), not fstab, not symlinks |
 | `40-install-lcd.sh` | Install lightweight `cklcd` + service, disable stock `ck-ui` | Idempotent; probes `/dev/fb0` first |
 | `41-install-cloudkey.sh` | Install the richer `jnovack/cloudkey` daemon (LEDs, button, web UI) | Pinned release + sha256; verifies it's an ARM ELF; disables `ck-ui` **and** `cklcd` so only one owns `/dev/fb0` |
-| `50-install-docker.sh` | Install Docker; `data-root`→`/volume/docker`; cap container logs | Refuses eMMC data-root unless forced; checks kernel namespaces/cgroups; kernel-aware storage-driver; makes `docker.service` require the disk mount; backs up existing `daemon.json` |
 | `99-verify.sh` | Read-only health check | Changes nothing |
 
 ## Modernizing the userland (optional)
@@ -146,7 +145,7 @@ to keep running on the vendor **3.18** kernel:
 
 | Target | systemd | On the 3.18 kernel |
 |---|---|---|
-| Debian 12 *bookworm* (in LTS since 2026-07, until 2028-06) | 252 | systemd ≥ 251 declares kernels older than **4.15** unsupported. It may still boot, but nobody has shown it on this box. **Untested — serial console + verified backup first.** |
+| Debian 12 *bookworm* (in LTS since 2026-07, until 2028-06) | 252 | systemd ≥ 251 declares kernels older than **4.15** unsupported. It may still boot, but nobody has shown it on this box. **Untested** — if it fails to boot, the way back is Recovery Mode + restoring your backup ([04](04-recovery.md)). |
 | Debian 13 *trixie* (current stable) | 257 | systemd ≥ 256 **refuses to boot on cgroup-v1-only kernels** unless `SYSTEMD_CGROUP_ENABLE_LEGACY_FORCE=1` is on the kernel command line — which here lives inside the Android-style `boot.img`. 3.18 has no cgroup v2. **Don't.** |
 
 Also expect: the kept Ubiquiti initramfs/udev/base-files packages were built for
@@ -154,7 +153,7 @@ bullseye, and apt prompts where you must **keep your `sshd_config`** or lose SSH
 Some `/etc` files get reset on boot by the base-files hooks — keep persistent
 config in systemd units under `/etc/systemd/system`.
 
-The real way to a supported Debian is a newer kernel
-([08-mainline-kernel.md](08-mainline-kernel.md), still research). Until then, a
-de-UniFi'd bullseye is a fine **LAN-only** appliance — just don't treat it as a
-patched, internet-facing server.
+The only real way to a supported Debian would be a newer kernel, and nobody has
+a working one for this board yet. Until then, a de-UniFi'd bullseye is a fine
+**LAN-only** appliance — just don't treat it as a patched, internet-facing
+server.

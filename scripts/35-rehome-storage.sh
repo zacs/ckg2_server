@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # 35-rehome-storage.sh — move write-heavy OS directories off the soldered-down
 # eMMC and onto the swappable SATA disk (/volume), to save eMMC write-endurance
-# and space. See docs/10-storage-and-docker.md for the full rationale.
+# and space. See docs/07-storage.md for the full rationale.
 #
 # It rehomes each directory with a systemd BIND .mount unit — never /etc/fstab,
 # which the CloudKey's base-files package rewrites on every boot (see
-# docs/07-watchdog-and-persistence.md). For each target it:
+# docs/05-watchdog-and-persistence.md). For each target it:
 #   1. rsyncs the current contents to <base>/rehome/<name>,
 #   2. writes /etc/systemd/system/<escaped>.mount  (What=<base>/rehome/<name>, bind),
 #   3. activates it (or, for /var/log, defers to the next boot — see below).

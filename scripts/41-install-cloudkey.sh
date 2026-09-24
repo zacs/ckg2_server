@@ -4,7 +4,7 @@
 #
 # What you get over cklcd: status LEDs, reset-button actions (short/long press
 # "bands", stealth mode), OLED burn-in mitigation, and an optional web dashboard
-# with a live event stream. See github.com/jnovack/cloudkey and docs/05-lcd.md.
+# with a live event stream. See github.com/jnovack/cloudkey and docs/03-lcd.md.
 #
 # It pulls the pre-built binary from a pinned GitHub release (no cross-compile
 # toolchain needed) and the matching systemd unit, env template and web-dashboard

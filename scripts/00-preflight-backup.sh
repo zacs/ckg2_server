@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 00-preflight-backup.sh — image the whole eMMC BEFORE you change anything. This
 # is your primary safety net: if a later step breaks the box you can restore this
-# image from recovery/serial (see docs/06-recovery.md).
+# image from Recovery Mode (see docs/04-recovery.md).
 #
 # The eMMC is /dev/mmcblk0 (~29 GiB usable). We write a full-disk image somewhere
 # that is NOT the eMMC. Important reality for this hardware: THERE IS NO USABLE
@@ -23,7 +23,7 @@
 #
 # NOTE on consistency: imaging a live, mounted eMMC gives a "crash-consistent"
 # copy (like pulling the plug). Fine as a byte-for-byte restore target and what
-# most people use. For a perfect image, run from Recovery Mode (docs/06-recovery.md).
+# most people use. For a perfect image, run from Recovery Mode (docs/04-recovery.md).
 #
 # Usage:
 #   ./00-preflight-backup.sh /volume/emmc-backup.img       # to a mounted disk (raw)

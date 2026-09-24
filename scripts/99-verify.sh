@@ -72,31 +72,8 @@ for d in /home /srv /var/log; do
   fi
 done
 
-echo; echo "== docker (if installed) =="
-if command -v docker >/dev/null 2>&1; then
-  if docker info >/dev/null 2>&1; then
-    root="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null)"
-    drv="$(docker info -f '{{.Driver}}' 2>/dev/null)"
-    rootsrc="$(findmnt -rno SOURCE -T "$root" 2>/dev/null || true)"
-    if [[ -n "$root" ]] && ! on_os_storage "$root"; then
-      ok "docker data-root $root on $rootsrc (off the eMMC), driver=$drv"; pass=$((pass+1))
-    else
-      warn "docker data-root $root is on the eMMC ($rootsrc) — see 50-install-docker.sh / docs/10"
-    fi
-    if systemctl show -p RequiresMountsFor docker.service 2>/dev/null | grep -q "$root"; then
-      ok "docker.service waits for the disk (RequiresMountsFor=$root)"
-    else
-      warn "docker.service doesn't require the disk mount — re-run 50-install-docker.sh"
-    fi
-  else
-    warn "docker installed but daemon not responding (journalctl -u docker)"
-  fi
-else
-  log "docker not installed"
-fi
-
 echo; echo "== network / PoE =="
-# NIC is the USB ASIX AX88179; if you're reading this over SSH, PoE/USB-C power
+# NIC is the USB ASIX AX88179; if you're reading this over SSH, PoE power
 # and the NIC are obviously fine, but report the details anyway.
 IFACE="$(ip -o -4 route show to default 2>/dev/null | awk '{print $5; exit}')"
 if [[ -n "${IFACE:-}" ]]; then

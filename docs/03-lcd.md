@@ -1,4 +1,4 @@
-# 05 — The front-panel LCD
+# 03 — The front-panel LCD
 
 ## What it actually is
 

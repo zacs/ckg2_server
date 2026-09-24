@@ -1,4 +1,4 @@
-# 07 — Reboots, watchdogs, and making changes stick
+# 05 — Reboots, watchdogs, and making changes stick
 
 Two of the user's core requirements — "without it rebooting" and "survive
 reboots" — come down to understanding what makes a CloudKey reboot itself and
@@ -27,8 +27,7 @@ userland you run:
 **Conclusion:** you don't need to "defeat a watchdog." You remove the UniFi
 supervisor, and the self-reboots stop. That's exactly what `10-deunifi.sh` does —
 it purges the UniFi apps and `disable`s `uhwd.service`, `infctld.service`, and
-the setup/splash units. On a full reflash ([04](04-install-reflash.md)) the
-supervisor is gone by construction.
+the setup/splash units.
 
 ## Why your changes sometimes vanish on reboot (and the fix)
 
@@ -59,29 +58,22 @@ behaviours, from [jnovack's runbook](https://github.com/jnovack/cloudkey):
 - **`/etc/fstab` is reset** (above).
 - **Empty directories directly under `/volume` are deleted on every boot**
   (`mp-clean volume`, meant for stale UniFi partition mountpoints). Nest your data
-  (`/volume/appdata/<app>`, which is what `35-rehome-storage.sh` and the compose
-  example do) or drop a `.keep` file into any top-level directory that may sit
-  empty.
+  (`/volume/appdata/<app>` for service data, `/volume/rehome/…` for what
+  `35-rehome-storage.sh` moves) or drop a `.keep` file into any top-level
+  directory that may sit empty.
 - **Power-loss shutdown.** `/lib/udev/rules.d/40-powerloss.rules` sends `SIGPWR`
   to systemd whenever a power supply's `online` flips to `0`, and
-  `device-powerloss.service` then runs a clean `poweroff`. Never remove either —
-  it's what the battery exists for. The rule doesn't check *which* supply went
-  offline, so if you feed the box from **both** PoE and USB-C for redundancy,
-  losing either one will most likely trigger a clean shutdown anyway. Test that
-  (pull one feed) before relying on dual power.
-
-> Full reflash removes this entirely: you leave the UniFi base-files package
-> behind, so nothing rewrites `/etc`. On a reflashed system, `/etc/fstab` is
-> fine. This gotcha is specific to the "reclaim stock" path — which is still the
-> recommended one, because a `.mount` unit is a small price for not opening the
-> case.
+  `device-powerloss.service` then runs a clean `poweroff` when PoE drops. Never
+  remove either — it's what the battery exists for, and it protects whatever you
+  run on the box.
 
 ## Quick reference
 
-| You want to… | Do this (stock path) | Not this |
+| You want to… | Do this | Not this |
 |--------------|----------------------|----------|
 | Mount a disk at boot | systemd `.mount` unit | line in `/etc/fstab` |
 | Run something at boot | systemd service/timer | `/etc/rc.local`, cron `@reboot` in a reset file |
+| Run a service whose data is on `/volume` | `RequiresMountsFor=/volume/appdata/<app>` drop-in ([07](07-storage.md#running-your-own-services)) | hope it starts after the USB disk mounts |
 | Keep the box from self-rebooting | remove UniFi + disable `uhwd` | try to pet a watchdog |
 | Keep a top-level dir under `/volume` | nest it, or add a `.keep` file | leave it empty (deleted at boot) |
 | Persist SSH config | drop-in in `/etc/ssh/sshd_config.d/` (survives) + verify after a reboot | edit main `sshd_config` and hope |

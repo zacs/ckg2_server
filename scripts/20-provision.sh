@@ -5,7 +5,7 @@
 #
 # Idempotent: safe to run more than once. Everything it writes lives in places
 # the CloudKey's boot hooks do NOT rewrite (see the /etc/fstab caveat in
-# 30-mount-storage.sh and docs/07-watchdog-and-persistence.md).
+# 30-mount-storage.sh and docs/05-watchdog-and-persistence.md).
 #
 # Run AFTER 10-deunifi.sh and a reboot.
 #
@@ -30,7 +30,7 @@ log "(Current firmware: aarch64 kernel + arm64 userland. Very old firmware shipp
 . /etc/os-release 2>/dev/null || true
 if [[ "${VERSION_CODENAME:-}" == "bullseye" ]]; then
   warn "This is Debian 11 (bullseye), which reached end-of-life on 2026-08-31 — no further"
-  warn "security updates will arrive. See 'Modernizing the userland' in docs/03-install-stock.md"
+  warn "security updates will arrive. See 'Modernizing the userland' in docs/02-install.md"
   warn "before relying on this box for anything exposed."
 fi
 
@@ -59,14 +59,14 @@ EOF
 # — flipping either before you have a *tested* SSH key is exactly how people lock
 # themselves out. The drop-in below only carries harmless settings. Lock down
 # password/root login yourself, after verifying key login — see
-# docs/09-accounts-and-access.md.
+# docs/06-accounts-and-access.md.
 if [[ -f /etc/ssh/sshd_config ]]; then
   log "Applying safe SSH defaults (no auth changes)…"
   mkdir -p /etc/ssh/sshd_config.d
   cat > /etc/ssh/sshd_config.d/10-ckg2.conf <<'EOF'
 # ckg2_server SSH drop-in — intentionally contains NO auth-restricting settings.
 # To harden AFTER you've installed and TESTED an SSH key (see
-# docs/09-accounts-and-access.md), add here and reload sshd:
+# docs/06-accounts-and-access.md), add here and reload sshd:
 #     PasswordAuthentication no
 #     ChallengeResponseAuthentication no   # OpenSSH 8.4 (bullseye) name...
 #     KbdInteractiveAuthentication no      # ...and the >= 8.7 name; set both

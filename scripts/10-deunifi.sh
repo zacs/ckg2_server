@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 10-deunifi.sh — strip the UniFi application layer off a stock CloudKey Gen2 /
 # Gen2 Plus, turning it back into a plain Debian box you fully control. This is
-# the core of the "reclaim stock" install path (Tier 1 in the README).
+# the core of the install (see docs/02-install.md).
 #
 # What it does, and why it is safe:
 #   * Removes the UniFi Network + Protect apps, MongoDB, the UniFi-OS agents,
@@ -214,7 +214,7 @@ purge_batches() {
       fi
       if ! ssh_alive; then
         err "LIVENESS CHECK FAILED after this batch: sshd is not accepting connections."
-        err "STOP HERE. Do not run more. Reconnect via serial/recovery if you lose this session."
+        err "STOP HERE. Do not run more. If you lose this session, the way back is Recovery Mode (docs/04-recovery.md)."
         exit 1
       fi
       log "sshd still alive."

@@ -1,4 +1,4 @@
-# 06 — Recovery & un-bricking
+# 04 — Recovery & un-bricking
 
 The CloudKey has a genuinely useful safety net: an on-eMMC **Recovery firmware**
 that lives in its own partition, separate from the main OS you're modifying. As
@@ -11,12 +11,12 @@ always get back.
 2. Hold the front **reset button** while powering on, and keep holding ~10 s
    until the OLED shows **`RECOVERY MODE`**.
 3. The recovery firmware serves:
-   - a **web UI** on the device's IP (upload a firmware `.bin` to reflash), and
-   - a **serial/SSH shell** (`root` / `ubnt`).
+   - a **web UI** on the device's IP (upload a firmware `.bin` to reinstall stock), and
+   - an **SSH shell** (`root` / `ubnt`).
 
 ## Restore stock UniFi firmware
 
-From the recovery shell (serial or SSH):
+From the recovery SSH shell:
 
 ```bash
 cd /tmp
@@ -62,27 +62,19 @@ dd if=/path/to/emmc-backup.img of=/dev/mmcblk0 bs=4M conv=fsync
 sync && reboot
 ```
 
-## Serial console when there's no display/network
-
-If the box won't network and the OLED is dark, attach the UART
-([02-serial-console.md](02-serial-console.md)) and watch the boot log. You'll see
-the Qualcomm PBL/SBL1 stages and the `cloudkey-apq8053` prompt. From a recovery
-shell you can run the `ubnt-tool fwupdate` or `dd`-restore steps above.
-
 ## Failure ladder (what to try, worst case last)
 
 | Symptom | Fix |
 |---------|-----|
 | Boots but SSH refused after a bad purge | You still have your open session (that's why we purge over an interactive SSH login). Re-enable/repair `ssh`, or reboot into Recovery and restore. |
 | Main OS won't boot | Reset-hold → Recovery Mode → `ubnt-tool fwupdate` or `dd`-restore your backup. |
-| No display, no network, no recovery | UART console; from recovery shell, reflash. |
+| OLED dark and no network | Check PoE first: the switch port must supply 802.3af (try another port/cable/injector). Then try Recovery Mode — it runs from its own partition, independent of the main OS. |
 | Recovery Mode itself won't come up | You likely damaged a Qualcomm firmware/`recovery` partition. Last resort is EDL/9008 mode — but **no public firehose loader for the CloudKey exists**, so this is effectively unrecoverable. This is why you keep an untouched `recovery` partition and a verified full backup. |
-| Won't power on at all / bulging case | Suspect the **swollen internal battery** (Plus). Disconnecting the pack often revives it; the unit runs on PoE/USB-C without it. See [01-hardware.md](01-hardware.md) safety notes. |
+| Won't power on at all / bulging case | Suspect the **swollen internal battery** (Plus). Disconnecting the pack often revives it; the unit runs on PoE without it. See [01-hardware.md](01-hardware.md) safety notes. |
 
 ## Golden rules
 
 - **Always have a verified full eMMC backup before touching anything.**
 - **Never write to the Qualcomm firmware partitions** (`sbl1`, `rpm`, `tz`,
   `devcfg`, `aboot`, `recovery`). Everything in this repo stays away from them.
-- Do risky flashing **from Recovery Mode with UART attached**, not from the
-  running main OS.
+- Do restores **from Recovery Mode**, not from the running main OS.
