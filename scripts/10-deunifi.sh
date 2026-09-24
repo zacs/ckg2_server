@@ -74,8 +74,9 @@ FORBIDDEN_RE='^(ck-ui|ubnt-tools|uck-tools|cloudkey-.*-base-files|.*-initramfs.*
 # --- packages to purge, in small batches -------------------------------------
 # A failure isolates to a handful of packages, not all at once. Only packages
 # actually present (installed, or config files left) are acted on, so names
-# from other firmware versions are harmless. The last two batches were seen on
-# firmware 6.x: fluent-bit is UniFi OS's log shipper, and PostgreSQL 14 + 16
+# from other firmware versions are harmless. Seen on firmware 6.x: fluent-bit
+# (UniFi OS's log shipper), ustate-exporter (ustated.service, "UI State Exporter
+# Daemon" — crash-loops at every boot once UniFi OS is gone), and PostgreSQL 14 + 16
 # are UniFi's own databases (nothing kept needs them; install a fresh one later
 # if an app of yours wants Postgres — don't re-run this script after that).
 BATCHES=(
@@ -83,7 +84,7 @@ BATCHES=(
   "mongodb-server mongodb-clients mongodb-server-core"
   "unifi unifi-core"
   "unifi-directory unifi-identity-update uid-agent ucs-agent uos-agent uos-discovery-client uos ulp-go"
-  "ustd ubnt-systemhub ubnt-unifi-setup ucore-setup-listener fluent-bit"
+  "ustd ubnt-systemhub ubnt-unifi-setup ucore-setup-listener fluent-bit ustate-exporter"
   "postgresql-14 postgresql-16 postgresql-client-14 postgresql-client-16 postgresql-client-common postgresql-common"
 )
 # One list, derived from the batches, so a package can't be approved by the
@@ -103,7 +104,7 @@ UNITS=(
   ucs-agent.service uid-agent.service ulp-go.service
   unifi.service unifi-core.service unifi-directory.service
   unifi-identity-update.service uos-agent.service uos-discovery-client.service
-  usd.service usdbd.service ubnt-dpkg-restore.service
+  usd.service usdbd.service ubnt-dpkg-restore.service ustated.service
   ck-splash.service ck-splash-reboot.service ck-splash-shutdown.service
 )
 
