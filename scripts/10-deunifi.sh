@@ -52,6 +52,18 @@ done
 require_root "$@"
 assert_cloudkey
 
+# Prerequisite: current stock firmware. 6.x is Debian 13; 5.x and older are
+# Debian 11 (bullseye), which lost security support on 2026-08-31. Update the
+# firmware BEFORE de-UniFi — on this 3.18 kernel that's the supported way off
+# bullseye (docs/02-install.md, "Modernizing the userland").
+. /etc/os-release 2>/dev/null || true
+if [[ "${VERSION_CODENAME:-}" == "bullseye" ]]; then
+  warn "This box runs Debian 11 (bullseye) = Cloud Key firmware 5.x or older, which gets"
+  warn "no security updates. Update the stock firmware to 6.x FIRST:"
+  warn "    ubnt-systool fwupdate <URL of the newest UCKP/UCKG2 .bin from ui.com>"
+  confirm "De-UniFi on bullseye anyway?" || die "aborted — update the firmware, then re-run."
+fi
+
 # --- never remove these; their removal bricks the box ------------------------
 # Guard is by package NAME so it holds on both models (the base-files variant
 # differs: cloudkey-plus-apq8053-base-files vs cloudkey-g2-apq8053-base-files).

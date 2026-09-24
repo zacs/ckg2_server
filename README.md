@@ -33,11 +33,22 @@ Full walkthrough: [docs/02-install.md](docs/02-install.md).
 
 ## Quick start
 
-Enable SSH in the UniFi OS settings first. Steps 0–1 run **on your
-workstation**; everything after runs **on the CloudKey, over an interactive SSH
-session**. Copy this repo onto the box (`git clone` or `scp -r`).
+Enable SSH in the UniFi OS settings first. The prerequisite runs on the
+CloudKey, steps 0–1 **on your workstation**, and everything after **on the
+CloudKey, over an interactive SSH session**. Copy this repo onto the box
+(`git clone` or `scp -r`).
 
 ```bash
+# --- PREREQUISITE, on the CLOUDKEY: current stock firmware ---------------------
+# Firmware 6.x is Debian 13 (trixie); 5.x and older are Debian 11 (bullseye),
+# which gets no more security updates. Update BEFORE anything else:
+cat /etc/os-release                  # says bullseye? then:
+ubnt-systool fwupdate <URL>          # URL of the newest .bin for YOUR model from ui.com:
+#   UCKP = Gen2 Plus, UCKG2 = Gen2. e.g. (Plus, 6.0.10):
+#   https://fw-download.ubnt.com/data/unifi-cloudkey/9c12-UCKP-6.0.10-222899cf-67fc-434d-855b-1499dfb2b0fe.bin
+#   It downloads (~860 MB), stages the image and reboots by itself. SSH back in
+#   and check os-release says trixie. (Works after de-UniFi too — see docs/02.)
+
 # --- on your WORKSTATION -------------------------------------------------------
 # 0. SAFETY NET: pull a full eMMC image over the network (the box has no usable
 #    USB port and nothing is mounted yet), then check the gzip stream is intact.
@@ -71,13 +82,13 @@ from here. Like a stock Ubuntu install, there's no firewall switched on, so an
 app you install is reachable on your LAN without extra rules (opt in with
 `20-provision.sh --firewall` if you want one).
 
-> **Heads-up — check your Debian release first** (`cat /etc/os-release`). Cloud
-> Key firmware up to 5.x is Debian 11 *bullseye*, whose LTS ended on
-> **2026-08-31**: no more security fixes. Ubiquiti's newer 6.x firmware reportedly
-> moves the same hardware to Debian 13 *trixie* — so the supported way off
-> bullseye is to update the stock firmware **before** de-UniFi, not to
-> dist-upgrade by hand. Either way, keep this box LAN-only. Details:
-> [docs/02-install.md](docs/02-install.md#modernizing-the-userland-optional).
+> **Why the firmware prerequisite:** Cloud Key firmware up to 5.x is Debian 11
+> *bullseye*, whose LTS ended on **2026-08-31** — no more security fixes.
+> Ubiquiti's 6.x firmware moves the same hardware (and the same 3.18 kernel) to
+> Debian 13 *trixie*. Updating the stock firmware is the supported way off
+> bullseye; a hand `dist-upgrade` isn't (details in
+> [docs/02-install.md](docs/02-install.md#modernizing-the-userland-optional)).
+> Keep this box LAN-only either way.
 
 **Where does everything live?** The OS stays on the **eMMC** (`/dev/mmcblk0`) —
 nothing here reinstalls it, it just strips UniFi off the top. Note `/` is an

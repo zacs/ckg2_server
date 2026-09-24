@@ -28,6 +28,18 @@ agents, and the watchdog/auto-updater that cause the reboot behaviour.
 - Get in over SSH. On stock UniFi OS, enable SSH in the UniFi OS settings (or the
   device's local portal) and set a password. Then `ssh root@<ip>` (or your admin
   user).
+- **Be on current stock firmware (6.x = Debian 13).** Check with
+  `cat /etc/os-release`; if it says *bullseye*, you're on 5.x or older, which no
+  longer gets security updates. Update first, over SSH:
+
+  ```bash
+  ubnt-systool fwupdate <URL of the newest .bin for your model>   # UCKP = Gen2 Plus, UCKG2 = Gen2
+  ```
+
+  Get the URL from ui.com → Downloads → Cloud Keys (copy the download link). It
+  downloads the image, stages it, and reboots by itself; SSH back in and confirm
+  `os-release` says *trixie*. More in
+  [Modernizing the userland](#modernizing-the-userland-optional).
 - **Read [05-watchdog-and-persistence.md](05-watchdog-and-persistence.md)** — it
   explains the two reboot mechanisms and the `/etc/fstab`-gets-rewritten gotcha.
 - Copy this repo onto the box: `git clone` it, or `scp -r` the folder over.
@@ -142,23 +154,34 @@ more bullseye security fixes (Freexian sells "ELTS" beyond that, outside
 Debian). `20-provision.sh` still sets up unattended-upgrades, which is only
 useful on a supported release. Check what you have: `cat /etc/os-release`.
 
-**The easy route: let Ubiquiti do the upgrade.** Ubiquiti's own **6.x** firmware
-for the Cloud Key runs a Debian 13 *trixie* base on this same 3.18 kernel:
-[hutchx86/cloudkey-unas](https://github.com/hutchx86/cloudkey-unas) runs its
-tooling on a stock Gen2 Plus updated to firmware 6.0.7+, describes the device as
-trixie-based, and handles trixie-only behaviour on the device itself. (Not
-confirmed against Ubiquiti's release notes.) The way off bullseye is:
+**The supported route: update the stock firmware.** Ubiquiti's **6.x** firmware
+for the Cloud Key runs a Debian 13 *trixie* base on this same 3.18 kernel (also
+seen by [hutchx86/cloudkey-unas](https://github.com/hutchx86/cloudkey-unas) on a
+stock Gen2 Plus). Ubiquiti's own tool does it over SSH:
 
-1. Update the stock firmware while UniFi OS is still installed (from the UniFi
-   OS console's update settings), or — if you've already de-UniFi'd — flash
-   current stock firmware from Recovery Mode
-   ([04-recovery.md](04-recovery.md#restore-or-upgrade-stock-unifi-firmware));
-   that wipes your changes, so back up anything you've added first.
-2. Confirm `cat /etc/os-release` says trixie, then take a **fresh** eMMC backup
-   (step 0) — your old image is the bullseye system.
-3. Run the de-UniFi steps above on top. The package lists were built on 5.x, so
-   read the dry run carefully — the simulation gate aborts on any surprise, but
-   6.x may add packages the list doesn't know about yet.
+```bash
+ubnt-systool fwupdate <URL>
+# e.g. Gen2 Plus, 6.0.10 (check ui.com for newer; UCKG2 files are for the plain Gen2):
+# https://fw-download.ubnt.com/data/unifi-cloudkey/9c12-UCKP-6.0.10-222899cf-67fc-434d-855b-1499dfb2b0fe.bin
+```
+
+It downloads the image to `/var/tmp`, reports the firmware string (e.g.
+`UCKP.apq8053.v6.0.10.8e20374.260922.0941`), stages it, and reboots to flash.
+It also works **after** `10-deunifi.sh` — `ubnt-systool` ships in a package
+de-UniFi keeps. Without SSH (or if it fails), use Recovery Mode instead
+([04-recovery.md](04-recovery.md#restore-or-upgrade-stock-unifi-firmware)).
+
+Afterwards:
+
+1. SSH back in and confirm `cat /etc/os-release` says *trixie*. A firmware
+   update is expected to put back stock UniFi OS, so check
+   `dpkg -l | grep -iE 'unifi|uos'` — if the UniFi layer is back, you're at the
+   start of this guide again.
+2. Take a **fresh** eMMC backup (step 0) — your old image is the bullseye system.
+3. Run the de-UniFi steps on top. The package lists were built on 5.x, so read
+   the dry run carefully — the simulation gate aborts on any cascade into a
+   protected package, but 6.x may add UniFi packages the list doesn't know
+   about yet.
 
 **The hard route: dist-upgrade by hand.** Not the easy fix it is on a PC,
 because the userland has to keep running on the vendor **3.18** kernel with
