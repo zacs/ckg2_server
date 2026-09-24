@@ -276,10 +276,15 @@ def mem_used_pct():
     return f"{100 * (total - avail) // total}%"
 
 
-def _zone_celsius(raw):
-    # Units are MIXED on this kernel: Qualcomm's 3.18-era tsens zones report
-    # whole degrees (42) while PMIC/battery zones report millidegrees (42000).
-    return raw / 1000 if abs(raw) >= 1000 else float(raw)
+def _zone_celsius(raw, ztype=""):
+    # Units are MIXED on this kernel (measured on a Gen2 Plus): the SoC's
+    # tsens_tz_sensor* zones report tenths of a degree (474 = 47.4C), while the
+    # board/PMIC/battery zones report millidegrees (43000 = 43C).
+    if abs(raw) >= 1000:
+        return raw / 1000
+    if ztype.startswith("tsens"):
+        return raw / 10
+    return float(raw)
 
 
 def cpu_temp():
@@ -287,17 +292,17 @@ def cpu_temp():
     soc, other = [], []
     for zone in _glob("/sys/class/thermal/thermal_zone*"):
         try:
-            with open(os.path.join(zone, "temp")) as fh:
-                c = _zone_celsius(int(fh.read().strip()))
-        except (OSError, ValueError):
-            continue
-        if not 0 < c < 150:
-            continue
-        try:
             with open(os.path.join(zone, "type")) as fh:
                 ztype = fh.read().strip().lower()
         except OSError:
             ztype = ""
+        try:
+            with open(os.path.join(zone, "temp")) as fh:
+                c = _zone_celsius(int(fh.read().strip()), ztype)
+        except (OSError, ValueError):
+            continue
+        if not 0 < c < 150:
+            continue
         (soc if ("tsens" in ztype or "cpu" in ztype) else other).append(c)
     temps = soc or other
     return f"{max(temps):.0f}C" if temps else None

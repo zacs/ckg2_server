@@ -111,18 +111,28 @@ else
 fi
 
 echo; echo "== thermals (fanless — keep an eye on this) =="
-# Units are MIXED on this kernel: Qualcomm's 3.18-era tsens zones report whole
-# degrees C (e.g. 42) while PMIC/battery zones report millidegrees (e.g. 42000).
-# Dividing everything by 1000 turns every tsens reading into "0°C". Treat
-# values >= 1000 as millidegrees, smaller ones as degrees; hide only true 0s.
-skipped=0
-for z in /sys/class/thermal/thermal_zone*; do
+# Units are MIXED on this kernel (measured on a Gen2 Plus): the SoC's 16
+# tsens_tz_sensor* zones report TENTHS of a degree (474 = 47.4°C), while the
+# board/PMIC/battery zones (xo_therm, pm8953_tz, battery) report millidegrees
+# (43000 = 43°C). The SoC sensors are summarised on one line; hide true 0s.
+skipped=0; soc_min=""; soc_max=""; soc_n=0
+for z in $(ls -d /sys/class/thermal/thermal_zone* 2>/dev/null | sort -V); do
   [[ -r "$z/temp" ]] || continue
   t="$(cat "$z/temp" 2>/dev/null)"; [[ "$t" =~ ^-?[0-9]+$ ]] || continue
   if (( t == 0 )); then skipped=$((skipped+1)); continue; fi
-  (( t >= 1000 || t <= -1000 )) && c=$((t/1000)) || c=$t
-  printf '   %-15s %-22s %s°C\n' "$(basename "$z")" "$(cat "$z/type" 2>/dev/null)" "$c"
+  type="$(cat "$z/type" 2>/dev/null)"
+  if (( t >= 1000 || t <= -1000 )); then c=$((t/1000))
+  elif [[ "$type" == tsens* ]]; then c=$((t/10))
+  else c=$t; fi
+  if [[ "$type" == tsens* ]]; then
+    soc_n=$((soc_n+1))
+    [[ -z "$soc_min" || "$c" -lt "$soc_min" ]] && soc_min=$c
+    [[ -z "$soc_max" || "$c" -gt "$soc_max" ]] && soc_max=$c
+    continue
+  fi
+  printf '   %-22s %s°C\n' "$type" "$c"
 done
+(( soc_n > 0 )) && printf '   %-22s %s–%s°C  (%d tsens sensors)\n' "SoC" "$soc_min" "$soc_max" "$soc_n"
 (( skipped > 0 )) && printf '   (%d zones reading 0 hidden)\n' "$skipped"
 
 echo
