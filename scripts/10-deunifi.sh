@@ -68,15 +68,20 @@ fi
 # Guard is by package NAME so it holds on both models (the base-files variant
 # differs: cloudkey-plus-apq8053-base-files vs cloudkey-g2-apq8053-base-files).
 # uck-tools is CloudKey-specific hardware tooling of unknown criticality — treat
-# it as load-bearing too (never let a cascade drag it out).
-FORBIDDEN_RE='^(ck-ui|ubnt-tools|uck-tools|cloudkey-.*-base-files|.*-initramfs.*|linux-image-.*)$'
+# it as load-bearing too (never let a cascade drag it out). libpam-usermapper
+# sits in the SSH/PAM login path and systemd-networkd-fallbacker in network
+# bring-up (both seen on 6.x): losing either could cost you remote access.
+FORBIDDEN_RE='^(ck-ui|ubnt-tools|uck-tools|cloudkey-.*-base-files|.*-initramfs.*|linux-image-.*|libpam-usermapper|systemd-networkd-fallbacker)$'
 
 # --- packages to purge, in small batches -------------------------------------
 # A failure isolates to a handful of packages, not all at once. Only packages
 # actually present (installed, or config files left) are acted on, so names
 # from other firmware versions are harmless. Seen on firmware 6.x: fluent-bit
 # (UniFi OS's log shipper), ustate-exporter (ustated.service, "UI State Exporter
-# Daemon" — crash-loops at every boot once UniFi OS is gone), and PostgreSQL 14 + 16
+# Daemon" — crash-loops at every boot once UniFi OS is gone), the extras batch
+# (analytic-report-go = telemetry, ui-snmp = SNMP agent, ble-http-transport +
+# bluez-tools-ui = Bluetooth setup for the UniFi app, node24 = Ubiquiti's Node
+# build for unifi-core), and PostgreSQL 14 + 16
 # are UniFi's own databases (nothing kept needs them; install a fresh one later
 # if an app of yours wants Postgres — don't re-run this script after that).
 BATCHES=(
@@ -85,6 +90,7 @@ BATCHES=(
   "unifi unifi-core"
   "unifi-directory unifi-identity-update uid-agent ucs-agent uos-agent uos-discovery-client uos ulp-go"
   "ustd ubnt-systemhub ubnt-unifi-setup ucore-setup-listener fluent-bit ustate-exporter"
+  "analytic-report-go ui-snmp ble-http-transport bluez-tools-ui node24"
   "postgresql-14 postgresql-16 postgresql-client-14 postgresql-client-16 postgresql-client-common postgresql-common"
 )
 # One list, derived from the batches, so a package can't be approved by the
