@@ -248,6 +248,16 @@ purge_leftover_configs() {
   done
 }
 
+# apt_purge PKG... — apt-get purge, minus the hundreds of harmless
+# "update-alternatives: warning: skip creation of …" lines PostgreSQL's scripts
+# print because the firmware ships no man pages (they buried a successful run).
+# Everything else, errors included, still shows. Returns apt's own status.
+apt_purge() {
+  DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y "$@" 2>&1 \
+    | grep --line-buffered -v 'update-alternatives: warning: skip creation of'
+  return "${PIPESTATUS[0]}"
+}
+
 purge_batches() {
   local batch remaining left
   for batch in "${BATCHES[@]}"; do
@@ -262,7 +272,7 @@ purge_batches() {
     if [[ "$APPLY" == "1" ]]; then
       # DPkg::Lock::Timeout makes newer apt wait for the lock instead of failing;
       # harmlessly ignored by older apt (which is why we also wait_apt_lock above).
-      if DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y $remaining; then
+      if apt_purge $remaining; then
         ok "batch purged."
       else
         warn "apt reported errors for this batch — checking what's left…"
