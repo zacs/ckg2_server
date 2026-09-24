@@ -14,20 +14,34 @@ always get back.
    - a **web UI** on the device's IP (upload a firmware `.bin` to reinstall stock), and
    - an **SSH shell** (`root` / `ubnt`).
 
-## Restore stock UniFi firmware
+## Restore (or upgrade) stock UniFi firmware
 
-From the recovery SSH shell:
+This works even after `10-deunifi.sh` removed the UniFi OS updater: Recovery
+Mode runs from its own partition, which nothing in this repo touches. It's also
+how you move to a **newer** stock firmware (e.g. the Debian 13-based 6.x — see
+[02-install.md](02-install.md#modernizing-the-userland-optional)). It replaces
+the OS with stock, so anything you set up afterwards is gone.
 
-```bash
-cd /tmp
-# Recovery's wget may not support TLS 1.2 — use http:// (not https://).
-wget http://fw-download.ubnt.com/data/unifi-cloudkey/<firmware-file>.bin
-ubnt-tool fwupdate <firmware-file>.bin
-# one reboot later you're back on stock
-```
+1. On your workstation, download the latest firmware `.bin` for **your model**
+   (UCK-G2-PLUS vs UCK-G2) from Ubiquiti's download page
+   (ui.com → Downloads → Cloud Keys). Check the SHA-256 if the page lists one.
+2. Put the box in Recovery Mode (above).
+3. Either upload the `.bin` through the recovery **web UI** at the device's IP,
+   or serve it from the workstation and flash it from the recovery **SSH** shell
+   (recovery's `wget` may lack modern TLS, hence plain HTTP from your LAN):
 
-Get the correct firmware file from the UniFi download pages for **UCK-G2-PLUS**
-(or UCK-G2). Match your model.
+   ```bash
+   # workstation, in the directory holding the .bin:
+   python3 -m http.server 8000
+
+   # CloudKey recovery shell (ssh root@<device-ip>, password ubnt):
+   cd /tmp
+   wget http://<workstation-ip>:8000/<firmware-file>.bin
+   ubnt-tool fwupdate <firmware-file>.bin
+   # one reboot later you're on stock
+   ```
+
+4. Run the UniFi OS setup, enable SSH, and check `cat /etc/os-release`.
 
 ## Restore your own eMMC image
 

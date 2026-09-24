@@ -143,17 +143,19 @@ Debian). `20-provision.sh` still sets up unattended-upgrades, which is only
 useful on a supported release. Check what you have: `cat /etc/os-release`.
 
 **The easy route: let Ubiquiti do the upgrade.** Ubiquiti's own **6.x** firmware
-for the Cloud Key reportedly runs a Debian 13 *trixie* base on this same 3.18
-kernel ([hutchx86/cloudkey-unas](https://github.com/hutchx86/cloudkey-unas)
-documents a stock Gen2 Plus on firmware 6.0.7–6.0.9 with a trixie base — one
-source, not confirmed against Ubiquiti's release notes). If that holds, the way
-off bullseye is:
+for the Cloud Key runs a Debian 13 *trixie* base on this same 3.18 kernel:
+[hutchx86/cloudkey-unas](https://github.com/hutchx86/cloudkey-unas) runs its
+tooling on a stock Gen2 Plus updated to firmware 6.0.7+, describes the device as
+trixie-based, and handles trixie-only behaviour on the device itself. (Not
+confirmed against Ubiquiti's release notes.) The way off bullseye is:
 
 1. Update the stock firmware while UniFi OS is still installed (from the UniFi
-   OS console's update settings), or — if you've already de-UniFi'd — reinstall current stock
-   firmware from Recovery Mode ([04-recovery.md](04-recovery.md)); that wipes
-   your changes, so back up anything you've added first.
-2. Confirm `cat /etc/os-release` says trixie.
+   OS console's update settings), or — if you've already de-UniFi'd — flash
+   current stock firmware from Recovery Mode
+   ([04-recovery.md](04-recovery.md#restore-or-upgrade-stock-unifi-firmware));
+   that wipes your changes, so back up anything you've added first.
+2. Confirm `cat /etc/os-release` says trixie, then take a **fresh** eMMC backup
+   (step 0) — your old image is the bullseye system.
 3. Run the de-UniFi steps above on top. The package lists were built on 5.x, so
    read the dry run carefully — the simulation gate aborts on any surprise, but
    6.x may add packages the list doesn't know about yet.
