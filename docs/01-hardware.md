@@ -25,16 +25,16 @@ is `3.18.44-ui-qcom`, and the flash partitions are Qualcomm's (`sbl1`, `devcfg`,
 | Part | Component | Notes |
 |------|-----------|-------|
 | **SoC** | Qualcomm **APQ8053** (Snapdragon 625) | 8× Cortex-A53 up to 2.0 GHz, 14 nm, ARMv8-A. Adreno 506 GPU (unused, headless). |
-| **Kernel arch** | **aarch64** (64-bit) | **Userland is firmware-dependent**: current UniFi OS (Debian 11 *bullseye*) ships a **64-bit arm64** userland (`dpkg --print-architecture` → `arm64`); older firmware was 32-bit **armhf**. Always check yours: `uname -m` **and** `dpkg --print-architecture`. This decides which container/binary arch you use. |
+| **Kernel arch** | **aarch64** (64-bit), vendor `3.18.44-ui-qcom` | **Userland is firmware-dependent**: current UniFi OS (Debian 11 *bullseye*) ships a **64-bit arm64** userland on both Gen2 and Gen2 Plus (`dpkg --print-architecture` → `arm64`); older firmware was 32-bit **armhf**. Always check yours: `uname -m` **and** `dpkg --print-architecture`. This decides which container/binary arch you use. The kernel also runs 32-bit ARM binaries (AArch32 compat). |
 | **RAM** | **3 GB** LPDDR3 (Plus); 2 GB (non-Plus) | Part of an eMCP package (RAM+eMMC combined): Samsung `KMGX6001BM` on Plus, SK hynix `H9TQ26ABJTAC` on non-Plus. |
-| **Flash** | **32 GB eMMC** → `/dev/mmcblk0` (~29 GiB) | A second small region `/dev/mmcblk1` (~1.9 GiB) is also present. |
+| **Flash** | **32 GB eMMC** → `/dev/mmcblk0` (~29 GiB) | Qualcomm A/B-style partition layout. `/` is an **OverlayFS** whose persistent writable layer is a **~6 GB** partition — that, not 29 GiB, is the space for OS changes. A `/dev/mmcblk1` may also appear: most likely the **microSD slot**, not part of the eMMC — check with `cat /sys/block/mmcblk1/device/type` (`SD` vs `MMC`). |
 | **NIC** | **ASIX AX88179** USB 3.0 → Gigabit Ethernet | Driver `ax88179_178a`. **The NIC is on USB**, not PCIe/native MAC. |
 | **Internal disk** | **USB-SATA bridge** (likely ASMedia ASM1153) → `/dev/sda` | Behind a **TI TUSB8044** USB-3 hub. There is **no native SATA/AHCI**. Uses `uas`/`usb-storage`. Stock drive: Toshiba MQ04ABD100V 1 TB 2.5". |
 | **Drive power** | +5 V only (2.5" drives only) | No 12 V rail. Up to ~5 TB 2.5". |
 | **Power in** | **802.3af PoE** (Type 1, ≤12.95 W) **or USB-C** (QC 2.0, ≤16 W) | Two USB-C ports. PoE is via an isolated flyback (yellow transformer by the RJ45). |
-| **Front panel** | **~160×64 monochrome OLED** → `/dev/fb0` | FPC ribbon `0260D-NF1-A`. **Not a touchscreen.** SSD13xx-class on-glass controller. See [05-lcd.md](05-lcd.md). |
+| **Front panel** | **160×60 OLED** → `/dev/fb0` | 16bpp **BGR565** framebuffer (stride 320, 19200 bytes), driver **`fb_sp8110`** over SPI. FPC ribbon `0260D-NF1-A`. **Not a touchscreen.** See [05-lcd.md](05-lcd.md). |
 | **Front button** | single reset/GPIO key → `/dev/input/event1` | `BTN_0` (0x100), active-low, GPIO 93. Short tap toggles display; ~10 s hold = Recovery Mode. |
-| **Status LEDs** | sysfs `/sys/class/leds/*` | Enumerate with `ls /sys/class/leds`. |
+| **Status LEDs** | sysfs `/sys/class/leds/{blue,white,ulogo_ctrl}` | Brightness 0–255. There is **no** kernel `timer` trigger (writing it silently no-ops) — blink by toggling `brightness` yourself. |
 | **RTC** | Qualcomm **PMIC (PM8953-class)** integrated RTC | No separate coin cell; timekeeping across power loss leans on the backup battery + NTP. |
 | **Backup battery** | **Plus: 7.4 V 300 mAh Li-ion 2-cell** (`APP00197`); non-Plus: 3.7 V | For clean shutdown on power loss. **See safety note below.** |
 | **Cooling** | **None — fanless / passive** | Runs hot. See safety note. |
@@ -93,5 +93,7 @@ free -h                         # RAM
 lsblk                           # mmcblk0 (eMMC) + sda (USB-SATA disk)
 lsusb -t                        # see the TUSB8044 hub, AX88179 NIC, USB-SATA bridge
 ls /sys/class/leds              # LED names
-cat /sys/class/graphics/fb0/virtual_size   # panel geometry
+cat /sys/class/graphics/fb0/virtual_size   # panel geometry (expect 160,60)
+findmnt / ; df -h /             # overlay root + how much of its ~6 GB is left
+cat /sys/block/mmcblk1/device/type 2>/dev/null   # SD = the microSD slot
 ```

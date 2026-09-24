@@ -31,14 +31,34 @@ Get the correct firmware file from the UniFi download pages for **UCK-G2-PLUS**
 
 ## Restore your own eMMC image
 
-If you made a backup with `00-preflight-backup.sh`, restore it from Recovery Mode
-(where the main rootfs isn't mounted):
+Restore from Recovery Mode (where the main rootfs isn't mounted). Know what a
+whole-disk restore does: `/dev/mmcblk0` includes the Qualcomm firmware
+partitions **and `recovery` itself**, so this rewrites them too (with identical
+bytes if the image came from this unit). If the write is interrupted part-way
+through those, you're in the hard-brick case below. Keep power stable, and
+prefer "Restore stock" above when that's enough.
+
+**The usual case — the gzip image the README pulled onto your workstation:**
 
 ```bash
-# verify integrity first
+# on the workstation: confirm the image is complete, then serve it over HTTP
+gzip -t cloudkey-emmc.img.gz
+python3 -m http.server 8000            # in the directory holding the image
+
+# on the CloudKey, in the Recovery shell (DOUBLE-CHECK the device node!)
+wget -O- http://<workstation-ip>:8000/cloudkey-emmc.img.gz | gunzip | dd of=/dev/mmcblk0 bs=4M
+sync && reboot
+```
+
+(If Recovery's busybox lacks `gunzip`, decompress on the workstation first and
+serve the raw `.img` instead.)
+
+**A raw image with a `.sha256`** (from `00-preflight-backup.sh` writing to a
+file):
+
+```bash
 sha256sum -c emmc-backup.img.sha256
-# write it back to the eMMC (DOUBLE-CHECK the device node!)
-dd if=/path/to/emmc-backup.img of=/dev/mmcblk0 bs=4M conv=fsync status=progress
+dd if=/path/to/emmc-backup.img of=/dev/mmcblk0 bs=4M conv=fsync
 sync && reboot
 ```
 

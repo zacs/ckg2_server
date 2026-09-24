@@ -33,11 +33,19 @@ world, **not** Armbian:
    `usb-storage`) hang off a **TI TUSB8044** USB hub. Your kernel config must
    include those USB drivers; there's no `stmmac`/AHCI to enable. Getting USB +
    the hub up is the make-or-break.
-3. **OLED panel driver.** The stock 3.18 fbdev driver for the SSD13xx-class panel
-   isn't mainline. Expect the panel to be dark until you write/port a small panel
-   driver — the rest of the system can work headless in the meantime.
+3. **OLED panel driver.** The stock 3.18 fbdev driver (`fb_sp8110`, an SPI
+   panel) isn't mainline. Expect the panel to be dark until you write/port a
+   small panel driver — the rest of the system can work headless in the meantime.
 4. **PMIC/thermal/regulators.** On a fanless board, thermal and regulator support
    matter; missing PMIC bits can mean instability under load.
+
+## Why it matters more now
+
+The kernel is also what caps the userland. Debian 11 (current UniFi OS) left LTS
+on 2026-08-31. Debian 13's systemd refuses to boot on a cgroup-v1-only kernel
+like 3.18, and Debian 12's systemd officially wants ≥ 4.15 (see
+[03-install-stock.md](03-install-stock.md#modernizing-the-userland-optional)).
+A working modern kernel is the path to a *supported* Debian on this box.
 
 ## Rough plan of attack (for someone who wants to try)
 

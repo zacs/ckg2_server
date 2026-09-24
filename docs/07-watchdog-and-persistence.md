@@ -9,8 +9,10 @@ what silently un-does your changes. Here's the whole picture.
 The scary "it just keeps rebooting when UniFi isn't happy" behaviour is **not** a
 hardware timer that will fight a custom OS. It's the **UniFi OS process
 supervisor / health-check layer** (`uhwd` — the UniFi hardware watchdog daemon —
-plus `infctld` and friends) deciding its own containers/DB/HDD are unhealthy and
-restarting or rebooting to "fix" it.
+and the UniFi OS agents) deciding its own services/DB/HDD are unhealthy and
+restarting or rebooting to "fix" it. (`infctld`, which `10-deunifi.sh` also
+disables, is just Ubiquiti's network-discovery daemon — UDP 10001 + CDP — not
+part of the reboot machinery.)
 
 There are, separately, two *real* low-level watchdogs, and neither cares what
 userland you run:
@@ -48,6 +50,26 @@ The fix this repo uses everywhere: **persist via `systemd` unit files under
 If you find another file getting reset, don't fight the hook — move whatever you
 needed into a systemd unit instead.
 
+## Other boot hooks that are still running
+
+De-UniFi keeps the load-bearing `ubnt-tools` + `*-base-files` packages, and their
+boot-time hook framework (`/usr/lib/ubnt/hooks/…`) keeps running. Known
+behaviours, from [jnovack's runbook](https://github.com/jnovack/cloudkey):
+
+- **`/etc/fstab` is reset** (above).
+- **Empty directories directly under `/volume` are deleted on every boot**
+  (`mp-clean volume`, meant for stale UniFi partition mountpoints). Nest your data
+  (`/volume/appdata/<app>`, which is what `35-rehome-storage.sh` and the compose
+  example do) or drop a `.keep` file into any top-level directory that may sit
+  empty.
+- **Power-loss shutdown.** `/lib/udev/rules.d/40-powerloss.rules` sends `SIGPWR`
+  to systemd whenever a power supply's `online` flips to `0`, and
+  `device-powerloss.service` then runs a clean `poweroff`. Never remove either —
+  it's what the battery exists for. The rule doesn't check *which* supply went
+  offline, so if you feed the box from **both** PoE and USB-C for redundancy,
+  losing either one will most likely trigger a clean shutdown anyway. Test that
+  (pull one feed) before relying on dual power.
+
 > Full reflash removes this entirely: you leave the UniFi base-files package
 > behind, so nothing rewrites `/etc`. On a reflashed system, `/etc/fstab` is
 > fine. This gotcha is specific to the "reclaim stock" path — which is still the
@@ -60,7 +82,8 @@ needed into a systemd unit instead.
 |--------------|----------------------|----------|
 | Mount a disk at boot | systemd `.mount` unit | line in `/etc/fstab` |
 | Run something at boot | systemd service/timer | `/etc/rc.local`, cron `@reboot` in a reset file |
-| Keep the box from self-rebooting | remove UniFi + disable `uhwd`/`infctld` | try to pet a watchdog |
+| Keep the box from self-rebooting | remove UniFi + disable `uhwd` | try to pet a watchdog |
+| Keep a top-level dir under `/volume` | nest it, or add a `.keep` file | leave it empty (deleted at boot) |
 | Persist SSH config | drop-in in `/etc/ssh/sshd_config.d/` (survives) + verify after a reboot | edit main `sshd_config` and hope |
 
 ## Verifying persistence

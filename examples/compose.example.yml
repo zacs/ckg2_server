@@ -29,9 +29,12 @@
 # a truly independent egress — the alert still rides your LAN/internet uplink.
 # So it reliably catches CLUSTER / SOFTWARE / HOST failure (a different failure
 # domain), but NOT a site-wide network or power loss that takes out the uplink
-# too. Two cheap ways to widen the domain it survives:
-#   - Power it over USB-C (power-capable) from a SEPARATE small UPS, so a failure
-#     of the PoE switch's power doesn't also kill your watcher.
+# too. Cheap ways to widen the domain it survives:
+#   - Power it from a SEPARATE small UPS (PoE injector or USB-C on that UPS), so
+#     a failure of the PoE switch's power doesn't also kill your watcher. Don't
+#     count on PoE + USB-C *together* as redundancy: the stock power-loss udev
+#     rule powers the box off when ANY supply goes offline (see
+#     ../docs/07-watchdog-and-persistence.md) — test it before relying on it.
 #   - Put it on a different switch / VLAN than the cluster's uplink where you can.
 #
 # ── HOW THE WATCHER ACTUALLY WATCHES (do both) ────────────────────────────────
@@ -54,14 +57,25 @@
 #
 # ── Before you bring this up ──────────────────────────────────────────────────
 #  1. Run ../scripts/50-install-docker.sh first (data-root -> /volume/docker,
-#     kernel-appropriate storage-driver, capped logs).
-#  2. FREE PORT 53 for Technitium (systemd-resolved's stub often holds it):
-#         sudo ss -ulpn 'sport = :53'
-#         echo -e '[Resolve]\nDNSStubListener=no' | sudo tee /etc/systemd/resolved.conf.d/10-no-stub.conf
+#     kernel-appropriate storage-driver, capped logs), then PROVE Docker works on
+#     this 3.18 kernel with the smoke test it prints — it's experimental here
+#     (see ../docs/10-storage-and-docker.md).
+#     Also install the Compose v2 plugin: Debian's docker.io has no
+#     `docker compose` (recipe in docs/10, "No docker compose out of the box").
+#  2. FREE PORT 53 for Technitium, if something already holds it:
+#         sudo ss -lunp | grep ':53 '          # who's on 53?
+#     If it's systemd-resolved's stub listener:
+#         sudo mkdir -p /etc/systemd/resolved.conf.d
+#         printf '[Resolve]\nDNSStubListener=no\n' | sudo tee /etc/systemd/resolved.conf.d/10-no-stub.conf
 #         sudo systemctl restart systemd-resolved
 #  3. Create data dirs on the SATA disk (nothing on the eMMC):
 #         sudo mkdir -p /volume/appdata/{technitium,uptime-kuma,arcane-agent,beszel-agent}
 #  4. Fill in every REPLACE_ME (agent tokens, hub URL/key, DNS admin password).
+#  5. Firewall: ports published with `ports:` BYPASS ufw (Docker programs
+#     iptables itself), so 5380/53/3001 below are LAN-reachable as-is.
+#     `network_mode: host` services are the opposite — ufw filters them, so open
+#     their ports yourself (e.g. `sudo ufw allow 45876/tcp` for beszel-agent if
+#     your hub connects in to it; not needed if the agent dials out via HUB_URL).
 #
 # ── Where to put it & run it ──────────────────────────────────────────────────
 #     sudo mkdir -p /volume/stacks/core && sudo cp compose.example.yml /volume/stacks/core/compose.yml
@@ -142,6 +156,7 @@ services:
     container_name: beszel-agent
     restart: unless-stopped
     network_mode: host                            # needs host net for interface stats
+                                                  # (host net => ufw applies: see step 5 above)
     volumes:
       - /volume/appdata/beszel-agent:/var/lib/beszel-agent
       - /var/run/docker.sock:/var/run/docker.sock:ro   # read-only: container stats only

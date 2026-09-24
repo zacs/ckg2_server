@@ -14,8 +14,11 @@ with a serial console attached and a verified backup.
 
 ## Why anyone does this
 
-- Escapes the locked **OverlayFS** rootfs (on modern UniFi OS, `/` changes don't
-  persist — the reflash gives you a normal writable ext4 root).
+- Escapes the **OverlayFS** rootfs. On current UniFi OS, `/` is an overlay whose
+  persistent writable layer is only a **~6 GB** eMMC partition: changes *do*
+  survive reboots (Path A relies on that), but space is tight and a firmware
+  update or factory reset wipes them. The reflash gives you a plain ext4 root
+  using the whole free eMMC.
 - Removes the UniFi OS supervisor at the source, so there is nothing to reboot
   you.
 - Lets you run a mainstream Debian/Ubuntu userland of your choice.
@@ -54,11 +57,13 @@ You keep the vendor 3.18 kernel (proven), unless you go further into mainline
 2. **Back up the whole eMMC** if you haven't: image `/dev/mmcblk0` to external
    storage and verify the checksum.
 
-3. **Get files onto the box.** On the **Gen2 Plus**, a USB drive enumerates in
-   recovery. On the **plain Gen2**, USB storage often does *not* enumerate in
-   recovery — instead serve the files from your PC
-   (`python3 -m http.server 8000`) and `wget http://<pc>:8000/…` from the
-   CloudKey. (Recovery's `wget` may lack TLS 1.2 → use plain `http`.)
+3. **Get files onto the box.** There is no usable external USB port
+   ([01-hardware.md](01-hardware.md#external-io--can-i-plug-in-a-usb-peripheral-no)),
+   so serve the files from your PC (`python3 -m http.server 8000`) and
+   `wget http://<pc>:8000/…` from the CloudKey. (Recovery's `wget` may lack
+   TLS 1.2 → use plain `http`.) Some write-ups mention "a USB drive" in recovery
+   on the Gen2 Plus; that is most likely the internal, USB-attached SATA disk,
+   so staging files on it beforehand may also work — unverified.
 
 4. **Flash the custom boot image** over the stock one (partition number **from
    your `parted -l`**, example uses p42):

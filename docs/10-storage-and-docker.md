@@ -7,9 +7,11 @@ scripts underneath.
 
 ## TL;DR
 
-- **The OS lives on the eMMC** (`/dev/mmcblk0`, ~29 GiB usable). Path A does **not
+- **The OS lives on the eMMC** (`/dev/mmcblk0`, ~29 GiB). Path A does **not
   reinstall** anything — it keeps the stock Debian that already lives there and
-  strips UniFi off the top. Your root filesystem (`/`) is the eMMC.
+  strips UniFi off the top. Your root filesystem (`/`) is an **OverlayFS** on the
+  eMMC whose writable layer is a **~6 GB** partition — that's the real budget
+  for everything you install or write outside `/volume`.
 - **The 2.5" SATA disk (`/dev/sda`, mounted at `/volume`) is bulk storage** — and
   the place to put anything that writes a lot. It's a USB-attached disk (there's
   no native SATA on this box), formatted and mounted by
@@ -21,6 +23,10 @@ scripts underneath.
 - **Put your volumes and bind-mounts under `/volume`.** Named volumes already
   follow `data-root` there once you've relocated it; for bind mounts, point them
   at `/volume/...` yourself.
+- **Docker on this kernel is experimental.** The 3.18 vendor kernel predates
+  overlay2; the script falls back to `vfs`, but a real multi-layer workload has
+  not been proven on this box. [Smoke-test it](#reality-check-old-kernel-but-a-modern-64-bit-userland)
+  before you build on it.
 - **Optionally rehome `/home`, `/srv`, and `/var/log` onto the SATA disk** with
   [`35-rehome-storage.sh`](../scripts/35-rehome-storage.sh), so day-to-day writes
   (user data, service data, and the logs that "hammer the disk") land on the
@@ -35,35 +41,48 @@ The eMMC is a 32 GB chip **soldered to the board**. Two consequences:
    one failure mode on this box that you can't fix with a screwdriver — when it
    wears out, the board is scrap. The SATA disk, by contrast, is a standard 2.5"
    drive you can swap in thirty seconds.
-2. **Space.** ~29 GiB total, with the OS already using a chunk of it. A couple of
-   Docker images plus their logs will fill it. `/volume` is however big your disk
-   is (commonly 250 GB – 2 TB).
+2. **Space.** The writable root is a **~6 GB** overlay partition, with the OS's
+   own changes already using some of it. A couple of Docker images plus their
+   logs will fill it. `/volume` is however big your disk is (commonly
+   250 GB – 2 TB). Check with `df -h / /volume`.
 
 So the whole game is: **keep the OS on the eMMC, and push everything that grows or
 churns onto `/volume`.**
 
 > The SATA disk is USB-attached (bridge behind an internal hub), so it enumerates
-> a beat after boot. Every mount that depends on it — the `/volume` mount itself,
-> the rehome bind-mounts, and Docker via `After=volume.mount` — uses `nofail`
-> semantics so a missing/slow disk degrades gracefully instead of hanging boot.
-> Check disk health with `smartctl -a /dev/sda` (installed by `20-provision.sh`).
+> a beat after boot. The `/volume` mount and the rehome bind-mounts use `nofail`,
+> so a missing/slow disk degrades instead of hanging boot. Because `nofail` also
+> means *nothing waits for it*, anything that writes to `/volume` must say so:
+> `50-install-docker.sh` gives `docker.service` a `RequiresMountsFor=` drop-in
+> (without it, a cold boot can start dockerd first and it quietly builds an empty
+> data-root on the eMMC under the mountpoint). Do the same for your own services:
+> `systemctl edit <unit>` → `[Unit]` `RequiresMountsFor=/volume`.
+> Check disk health with `smartctl -a /dev/sda` (installed by `20-provision.sh`;
+> some USB bridges only answer `smartctl -d sat -a /dev/sda`, some not at all).
 
 ## The map
 
 ```
-/dev/mmcblk0   eMMC, ~29 GiB    →  /              the OS (Debian). Keep it lean.
-/dev/mmcblk1   eMMC, ~1.9 GiB   →  (vendor)       small vendor partition — leave it.
+/dev/mmcblk0   eMMC, ~29 GiB    →  /  (overlay)   the OS (Debian); ~6 GB writable. Keep it lean.
+/dev/mmcblk1   if present       →  —              most likely the microSD slot (see 01-hardware.md)
 /dev/sda       SATA/USB disk    →  /volume        bulk storage + everything write-heavy
 ```
 
 After the optional rehome + Docker relocation, the busy paths point at `/volume`:
 
 ```
-/volume/docker   ← Docker data-root (images, container layers, named volumes, logs)
-/volume/home     ← /home        (bind mount)
-/volume/srv      ← /srv         (bind mount)
-/volume/log      ← /var/log     (bind mount, optional)
+/volume/docker           ← Docker data-root (images, container layers, named volumes, logs)
+/volume/rehome/home      ← /home        (bind mount)
+/volume/rehome/srv       ← /srv         (bind mount)
+/volume/rehome/var-log   ← /var/log     (bind mount, default on)
 ```
+
+Why the extra `rehome/` level: a UniFi boot hook that stays installed deletes
+**empty** directories directly under `/volume` on every boot (see
+[07](07-watchdog-and-persistence.md#other-boot-hooks-that-are-still-running)).
+`/srv` is usually empty, so `/volume/srv` would vanish and its bind would quietly
+fall back to the eMMC. The same goes for your own top-level directories: nest
+them, or give them a `.keep` file.
 
 ## Docker specifically
 
@@ -114,7 +133,24 @@ to `data-root`. That's covered by the journald cap in the rehome section below.)
 
 ### Reality check: old kernel (but a modern 64-bit userland)
 
-Docker runs on this box; the one real caveat is the kernel, not the arch:
+**Treat Docker here as an experiment until you've proven it.**
+[jnovack's runbook](https://github.com/jnovack/cloudkey) (on real Gen2/Gen2+
+hardware) tried Docker and gave up because the kernel predates overlay2, and ran
+everything as plain packages instead. This repo's `vfs` fallback sidesteps
+overlay entirely, but nobody has shown a real stack running on it yet. Before you
+invest in containers:
+
+```bash
+docker run --rm hello-world
+docker run -d --name smoke -p 8080:80 nginx:alpine && sleep 15 && curl -sI http://localhost:8080; docker rm -f smoke
+```
+
+If those fail, `50-install-docker.sh`'s kernel preflight output and
+`journalctl -u docker` say why; the fallback is native packages (Technitium and
+Uptime Kuma both have non-Docker installs). The old userland bites native apps
+too: bullseye's glibc is 2.31, and some prebuilt binaries want newer.
+
+The details:
 
 - **Storage driver.** Modern Docker prefers `overlay2`, which really wants a
   kernel ≥ 4.0. On the stock **3.18 vendor kernel** `overlay2` may be
@@ -130,6 +166,29 @@ Docker runs on this box; the one real caveat is the kernel, not the arch:
   userland, limited to `arm/v7` images — check yours with
   `dpkg --print-architecture`.) If a pull ever fails with a manifest/architecture
   error, that image simply doesn't ship your arch — rare on arm64.
+- **No `docker compose` out of the box.** Debian's `docker.io` (20.10 on
+  bullseye) doesn't ship the Compose v2 plugin, and bullseye's `docker-compose`
+  package is the old v1, which can't read the compose example. Install the
+  plugin binary from Docker's releases and verify it against its published
+  checksum:
+
+  ```bash
+  V=v2.X.Y     # pick a release: https://github.com/docker/compose/releases
+  A=$(uname -m)   # aarch64
+  cd /tmp
+  curl -fLO "https://github.com/docker/compose/releases/download/$V/docker-compose-linux-$A"
+  curl -fLO "https://github.com/docker/compose/releases/download/$V/docker-compose-linux-$A.sha256"
+  sha256sum -c "docker-compose-linux-$A.sha256"
+  sudo install -D -m 0755 "docker-compose-linux-$A" /usr/local/lib/docker/cli-plugins/docker-compose
+  docker compose version
+  ```
+
+  If a recent release complains about the Engine API version, try an older 2.x.
+- **Docker bypasses ufw for published ports.** `ports:` / `-p` mappings are
+  wired through Docker's own iptables chains, so they're reachable from the LAN
+  **even though ufw says "deny incoming"**. The opposite holds for
+  `network_mode: host` containers: those *are* filtered by ufw, so open their
+  ports explicitly (`ufw allow 53`, etc.).
 
 ## Rehoming /home, /srv, and /var/log
 
@@ -137,8 +196,11 @@ Docker runs on this box; the one real caveat is the kernel, not the arch:
 same trick as the disk mount: a **systemd bind-`.mount` unit**, never
 `/etc/fstab` (the CloudKey's base-files package rewrites fstab on every boot — see
 [07-watchdog-and-persistence.md](07-watchdog-and-persistence.md)). For each
-directory it rsyncs the current contents to `/volume/<name>`, writes a bind unit,
-and the mount shadows the eMMC copy at boot.
+directory it rsyncs the current contents to `/volume/rehome/<name>`, writes a bind
+unit, and the mount shadows the eMMC copy at boot. It skips a target that's a
+symlink (UniFi's boot hooks manage some links, and copying a link that points
+into `/volume` would copy `/volume` into itself) or that's already its own mount.
+Check `ls -ld /home /srv /var/log` before running it.
 
 Defaults it rehomes:
 

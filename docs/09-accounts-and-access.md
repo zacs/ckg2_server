@@ -65,8 +65,11 @@ cd ckg2_server/scripts
 # 1. Establish a KNOWN root password (don't rely on a vaguely-remembered one):
 sudo passwd root
 
-# 2. Install your SSH public key and TEST it from a second terminal:
-sudo ./05-add-ssh-key.sh ~/.ssh/id_ed25519.pub
+# 2. Install your SSH public key and TEST it from a second terminal.
+#    The .pub file is on your WORKSTATION, so either run this there:
+#        ssh-copy-id root@<cloudkey-ip>
+#    or paste the key text on the box:
+sudo ./05-add-ssh-key.sh "ssh-ed25519 AAAA... you@host"
 #    → open a NEW terminal:  ssh root@<cloudkey-ip>   (should not ask for a password)
 #    Keep your current session open until that works.
 
@@ -84,7 +87,7 @@ Running everything as root is fine for a homelab box, but if you'd rather:
 ```bash
 adduser zac                       # sets a password interactively
 usermod -aG sudo zac              # grant sudo (install `sudo` first if needed: apt install sudo)
-sudo ./05-add-ssh-key.sh --user zac ~/.ssh/id_ed25519.pub
+sudo ./05-add-ssh-key.sh --user zac "ssh-ed25519 AAAA... you@host"
 # test:  ssh zac@<ip>   then   sudo -v
 ```
 
@@ -96,12 +99,24 @@ Once you've logged in with your key on a fresh connection and confirmed it works
 # edit the drop-in this repo installed
 sudo tee /etc/ssh/sshd_config.d/10-ckg2.conf >/dev/null <<'EOF'
 PasswordAuthentication no
+ChallengeResponseAuthentication no
+KbdInteractiveAuthentication no
 PermitRootLogin prohibit-password
 X11Forwarding no
 ClientAliveInterval 120
 ClientAliveCountMax 3
 EOF
 sudo sshd -t && sudo systemctl reload ssh    # validate BEFORE it takes effect
+```
+
+Why both `ChallengeResponseAuthentication` *and* `KbdInteractiveAuthentication`:
+bullseye ships **OpenSSH 8.4**, which honours only the old name; 8.7 renamed it.
+Setting just the new name parses cleanly on 8.4 but does nothing — and with
+`UsePAM yes`, keyboard-interactive can still carry a password login even with
+`PasswordAuthentication no`. Confirm with:
+
+```bash
+sudo sshd -T | grep -iE 'passwordauthentication|challengeresponse|kbdinteractive|permitrootlogin'
 ```
 
 If `sshd -t` complains, fix it before reloading. Do **not** reboot or restart

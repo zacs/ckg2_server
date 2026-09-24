@@ -1,6 +1,9 @@
-# Backups / images produced by 00-preflight-backup.sh — never commit these
+# Backups / images produced by 00-preflight-backup.sh (or the ssh one-liner
+# in the README, which writes a .img.gz) — never commit these
 *.img
-*.img.sha256
+*.img.gz
+*.img.zst
+*.img*.sha256
 
 # Python
 __pycache__/

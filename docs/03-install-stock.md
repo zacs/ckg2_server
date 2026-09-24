@@ -45,7 +45,9 @@ cd ckg2_server/scripts
 #    network. Easiest: run this line FROM your workstation to pull the image:
 #        ssh root@<cloudkey> 'gzip -1 < /dev/mmcblk0' > cloudkey-emmc.img.gz
 #    Or push it from the box with the script's stdout mode:
-sudo ./00-preflight-backup.sh --stdout | gzip -1 | ssh you@nas 'cat > ck-emmc.img.gz'
+sudo ./00-preflight-backup.sh --stdout | gzip -1 | ssh you@nas 'cat > cloudkey-emmc.img.gz'
+#    Either way, check the result is a complete gzip stream before relying on it:
+#        gzip -t cloudkey-emmc.img.gz
 #    (If you've already mounted the SATA disk, you can instead write to a file
 #     there — but 30-mount-storage.sh erases that disk later, so copy it off.)
 
@@ -53,7 +55,10 @@ sudo ./00-preflight-backup.sh --stdout | gzip -1 | ssh you@nas 'cat > ck-emmc.im
 #    same password afterwards (it's in /etc/shadow, not the UniFi DB), but don't
 #    bet your only way in on it. See docs/09-accounts-and-access.md.
 sudo passwd root                               # set a KNOWN root password
-sudo ./05-add-ssh-key.sh ~/.ssh/id_ed25519.pub # install a key...
+#    Install your key FROM YOUR WORKSTATION (that's where the .pub file lives):
+#        ssh-copy-id root@<ip>
+#    or paste the key text here on the box:
+#        sudo ./05-add-ssh-key.sh "ssh-ed25519 AAAA... you@host"
 #    ...then TEST it from a SECOND terminal: `ssh root@<ip>` must work with no
 #    password prompt. Keep this session open until it does.
 
@@ -74,7 +79,11 @@ sudo ./99-verify.sh
 # 6. Provision the server (tools, firewall, auto-updates, NTP):
 sudo ./20-provision.sh
 
-# 7. Format + persistently mount the internal 2.5" disk (shows up as /dev/sda):
+# 7. Format + persistently mount the internal 2.5" disk (shows up as /dev/sda).
+#    A stock drive carries UniFi's own partitions (swap + a data partition, often
+#    still mounted at /volume, possibly with old Protect footage) — look first:
+#        lsblk -f /dev/sda ; swapon --show
+#    The script shows what's in use and releases it only after you confirm.
 sudo ./30-mount-storage.sh /dev/sda            # → /volume
 
 # 8. Take over the OLED. Pick ONE (only one process may own /dev/fb0):
@@ -84,7 +93,7 @@ sudo ./41-install-cloudkey.sh                  # featured: jnovack daemon (LEDs,
 
 # 9. (optional) Keep writes off the soldered eMMC — see docs/10-storage-and-docker.md:
 sudo ./35-rehome-storage.sh                    # move /home + /srv + /var/log onto /volume
-sudo ./50-install-docker.sh                    # Docker w/ data-root on /volume + capped logs
+sudo ./50-install-docker.sh                    # EXPERIMENTAL on this kernel — smoke-test it
 
 # 10. Final health check:
 sudo ./99-verify.sh
@@ -116,25 +125,36 @@ Docker, etc.).
 | `05-add-ssh-key.sh` | Install an SSH key for root (or a user) before surgery | Only *adds* a key; never disables password auth or restricts login → can't lock you out |
 | `10-deunifi.sh` | Purge UniFi apps + disable supervisor/watchdog | **Dry-run by default**; simulate-gate aborts on any cascade into `ck-ui`/`ubnt-tools`/`*-base-files`/initramfs/kernel; batched purge with SSH liveness check between batches |
 | `20-provision.sh` | Base tooling, ufw, unattended-upgrades, NTP, light SSH hardening | Idempotent; does **not** disable password auth (won't lock you out) |
-| `30-mount-storage.sh` | ext4 + systemd `.mount` for `/dev/sda` | Refuses eMMC/mounted disks; uses a `.mount` unit (survives the fstab rewrite) |
-| `35-rehome-storage.sh` | Bind-mount `/home`, `/srv`, `/var/log` onto `/volume` | Copies (never deletes) originals; requires `/volume` on the SATA disk; `nofail` bind units (survive a dead disk), not fstab, not symlinks |
+| `30-mount-storage.sh` | ext4 + systemd `.mount` for `/dev/sda` | Refuses the eMMC; lists UniFi's old partitions/swap still in use and releases them only after you confirm; flags `/etc/fstab` lines that point at the disk; uses a `.mount` unit (survives the fstab rewrite) |
+| `35-rehome-storage.sh` | Bind-mount `/home`, `/srv`, `/var/log` onto `/volume/rehome/` | Copies (never deletes) originals; requires `/volume` on the SATA disk; skips symlinked or already-mounted targets; `nofail` bind units (survive a dead disk), not fstab, not symlinks |
 | `40-install-lcd.sh` | Install lightweight `cklcd` + service, disable stock `ck-ui` | Idempotent; probes `/dev/fb0` first |
-| `41-install-cloudkey.sh` | Install the richer `jnovack/cloudkey` daemon (LEDs, button, web UI) | Pinned release; verifies it's an ARM ELF; disables `ck-ui` **and** `cklcd` so only one owns `/dev/fb0` |
-| `50-install-docker.sh` | Install Docker; `data-root`→`/volume/docker`; cap container logs | Refuses eMMC data-root unless forced; kernel-aware storage-driver; backs up existing `daemon.json` |
+| `41-install-cloudkey.sh` | Install the richer `jnovack/cloudkey` daemon (LEDs, button, web UI) | Pinned release + sha256; verifies it's an ARM ELF; disables `ck-ui` **and** `cklcd` so only one owns `/dev/fb0` |
+| `50-install-docker.sh` | Install Docker; `data-root`→`/volume/docker`; cap container logs | Refuses eMMC data-root unless forced; checks kernel namespaces/cgroups; kernel-aware storage-driver; makes `docker.service` require the disk mount; backs up existing `daemon.json` |
 | `99-verify.sh` | Read-only health check | Changes nothing |
 
 ## Modernizing the userland (optional)
 
-If your firmware is on an older Debian and you want a newer one, you can
-`dist-upgrade` step-by-step (9→10→11…). This works but has sharp edges on this
-box:
+**Where things stand (September 2026):** current UniFi OS is Debian 11
+*bullseye*, and bullseye's LTS ended on **2026-08-31**. `20-provision.sh` still
+sets up unattended-upgrades, but Debian publishes no more bullseye security
+fixes (Freexian sells "ELTS" beyond that, outside Debian). So at minimum:
+same-release patching (`apt-get update && apt-get full-upgrade`) gets you the
+*last* fixes, and the box should stay LAN-only with few exposed services.
 
-- Do it **after** `10-deunifi.sh` (fewer pinned UniFi packages in the way).
-- During `apt` prompts, **keep your locally modified `sshd_config`** or you may
-  lose SSH.
-- Some `/etc` files get reset on boot by the base-files hooks — keep persistent
-  config in systemd units and `/etc/systemd/system` where possible.
-- The vendor kernel stays put; only the userland moves.
+A release upgrade is **not** the easy fix it is on a PC, because the userland has
+to keep running on the vendor **3.18** kernel:
 
-This is genuinely optional — a de-UniFi'd stock Debian is already a perfectly
-good server.
+| Target | systemd | On the 3.18 kernel |
+|---|---|---|
+| Debian 12 *bookworm* (in LTS since 2026-07, until 2028-06) | 252 | systemd ≥ 251 declares kernels older than **4.15** unsupported. It may still boot, but nobody has shown it on this box. **Untested — serial console + verified backup first.** |
+| Debian 13 *trixie* (current stable) | 257 | systemd ≥ 256 **refuses to boot on cgroup-v1-only kernels** unless `SYSTEMD_CGROUP_ENABLE_LEGACY_FORCE=1` is on the kernel command line — which here lives inside the Android-style `boot.img`. 3.18 has no cgroup v2. **Don't.** |
+
+Also expect: the kept Ubiquiti initramfs/udev/base-files packages were built for
+bullseye, and apt prompts where you must **keep your `sshd_config`** or lose SSH.
+Some `/etc` files get reset on boot by the base-files hooks — keep persistent
+config in systemd units under `/etc/systemd/system`.
+
+The real way to a supported Debian is a newer kernel
+([08-mainline-kernel.md](08-mainline-kernel.md), still research). Until then, a
+de-UniFi'd bullseye is a fine **LAN-only** appliance — just don't treat it as a
+patched, internet-facing server.

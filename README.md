@@ -41,39 +41,54 @@ pristine, OverlayFS-free rootfs.
 
 ## Quick start (Path A)
 
-Do this **on the CloudKey, over an interactive SSH session** (enable SSH in the
-UniFi OS settings first). Copy this repo onto the box (`git clone` or `scp -r`).
+Enable SSH in the UniFi OS settings first. Steps 0–1 run **on your
+workstation**; everything after runs **on the CloudKey, over an interactive SSH
+session**. Copy this repo onto the box (`git clone` or `scp -r`).
 
 ```bash
-cd ckg2_server/scripts
+# --- on your WORKSTATION -------------------------------------------------------
+# 0. SAFETY NET: pull a full eMMC image over the network (the box has no usable
+#    USB port and nothing is mounted yet), then check the gzip stream is intact.
+ssh root@<cloudkey> 'gzip -1 < /dev/mmcblk0' > cloudkey-emmc.img.gz && gzip -t cloudkey-emmc.img.gz
+# 1. Install your SSH key (it lives on the workstation, not the CloudKey)...
+ssh-copy-id root@<cloudkey>
+#    ...and TEST it from a fresh terminal — this must NOT ask for a password:
+ssh -o PasswordAuthentication=no root@<cloudkey> true && echo key login OK
 
-sudo ./00-preflight-backup.sh --stdout | gzip -1 > /some/mounted/ck.img.gz  # 0. SAFETY NET (image the eMMC)
-#   ^ no USB port on this box — back up over the network instead. From your workstation:
-#     ssh root@<cloudkey> 'gzip -1 < /dev/mmcblk0' > cloudkey-emmc.img.gz
-sudo passwd root                                         # 1. set a KNOWN root password
-sudo ./05-add-ssh-key.sh ~/.ssh/id_ed25519.pub          #    + install an SSH key, then TEST it
-                                                         #    from a 2nd terminal before continuing
+# --- on the CLOUDKEY -----------------------------------------------------------
+cd ckg2_server/scripts
+sudo passwd root                                         # 1b. set a KNOWN root password
+#   (no ssh-copy-id? paste the key instead:  sudo ./05-add-ssh-key.sh "ssh-ed25519 AAAA… you@host")
 sudo ./10-deunifi.sh                                     # 2. dry run — see the plan, change nothing
 sudo ./10-deunifi.sh --apply                             # 3. remove UniFi + disable the watchdog
 sudo reboot                                              # 4. reboot by hand, then SSH back in
 
 sudo ./99-verify.sh                                      # 5. confirm a clean boot
 sudo ./20-provision.sh                                   # 6. tools, firewall, auto-updates, NTP
-sudo ./30-mount-storage.sh /dev/sda                      # 7. format + mount the 2.5" disk at /volume
+sudo ./30-mount-storage.sh /dev/sda                      # 7. WIPE + mount the 2.5" disk at /volume
+                                                         #    (UniFi's old partitions — check for Protect footage first)
 sudo ./41-install-cloudkey.sh                            # 8. rich OLED daemon (LEDs, button, web dashboard)
 
 sudo ./35-rehome-storage.sh                              # 9. (optional) /home + /srv + /var/log onto the SATA disk
-sudo ./50-install-docker.sh                              #    (optional) Docker, runtime on /volume, logs capped
+sudo ./50-install-docker.sh                              #    (optional, EXPERIMENTAL on this kernel) Docker on /volume
 sudo ./99-verify.sh                                      # 10. final health check
 ```
 
-That's it — a Debian box with `/volume` for bulk data, a firewall, automatic
-security updates, and the front panel showing hostname / IP / uptime. `apt
-install` whatever you want from here.
+That's it — a Debian box with `/volume` for bulk data, a firewall, unattended
+upgrades, and the front panel showing hostname / IP / uptime. `apt install`
+whatever you want from here.
+
+> **Heads-up — Debian 11 is end-of-life.** Current UniFi OS is Debian 11
+> *bullseye*, whose LTS ended on **2026-08-31**: unattended-upgrades is set up,
+> but no more security fixes will arrive. A release upgrade is constrained by the
+> old 3.18 vendor kernel (Debian 13's systemd won't boot on it). Keep this box
+> LAN-only, and read "Modernizing the userland" in
+> [docs/03-install-stock.md](docs/03-install-stock.md#modernizing-the-userland-optional).
 
 **Where does the OS live, and where does Docker go?** The OS stays on the
-**eMMC** (`/dev/mmcblk0`, mounted at `/`) — Path A never reinstalls it, it just
-strips UniFi off the top. The 2.5" SATA disk (`/dev/sda` → `/volume`) is bulk
+**eMMC** (`/dev/mmcblk0`) — Path A never reinstalls it, it just strips UniFi off
+the top. Note `/` is an OverlayFS whose writable layer is a **~6 GB** eMMC
+partition, so that — not the full 29 GiB — is the space you have for OS changes. The 2.5" SATA disk (`/dev/sda` → `/volume`) is bulk
 storage and the home for anything write-heavy. Docker's runtime defaults to
 `/var/lib/docker` **on the eMMC**; `50-install-docker.sh` relocates it to
 `/volume/docker` and caps container logs, and `35-rehome-storage.sh` can move
@@ -97,15 +112,16 @@ table in [docs/03-install-stock.md](docs/03-install-stock.md).
 
 ## The front-panel LCD
 
-The screen is a ~160×64 mono OLED exposed as a **plain Linux framebuffer
-(`/dev/fb0`)** — no weird protocol. You get two options; pick one (only one
+The screen is a 160×60 OLED exposed as a **plain Linux framebuffer
+(`/dev/fb0`, 16bpp BGR565, driver `fb_sp8110`)** — no weird protocol. You get two options; pick one (only one
 process may own the framebuffer at a time):
 
 **Featured — the `jnovack/cloudkey` daemon** (`41-install-cloudkey.sh`). A mature
 Go daemon that drives the OLED *and* the status LEDs, reacts to the front button
 (short/long-press "bands", stealth mode), mitigates OLED burn-in, and serves an
-optional live web dashboard. The installer pulls a pinned prebuilt armhf release,
-verifies it, and hands the panel over from stock `ck-ui`.
+optional live web dashboard. The installer pulls a pinned prebuilt release
+(32-bit ARM — the only build upstream ships; it runs on the arm64 userland via
+AArch32 compat), verifies its sha256, and hands the panel over from stock `ck-ui`.
 
 **Lightweight — this repo's `cklcd`** (`40-install-lcd.sh`). A single dependency-
 light Python 3 script (needs `python3-pil`) if you just want text on the panel:
@@ -132,12 +148,13 @@ highlights that affect how you use it:
   userland is firmware-dependent — **arm64** on current bullseye firmware, armhf
   on older. Check with `uname -m` and `dpkg --print-architecture` (it decides
   your container/binary arch).
-- **RAM / flash:** 3 GB (Plus) / 2 GB; 32 GB eMMC (`/dev/mmcblk0`).
+- **RAM / flash:** 3 GB (Plus) / 2 GB; 32 GB eMMC (`/dev/mmcblk0`). `/` is an
+  overlay with only **~6 GB** of writable space — put anything big on `/volume`.
 - **NIC and disk are both USB** behind an internal hub: Ethernet is an ASIX
   AX88179 (`ax88179_178a`); the 2.5" bay is a USB-SATA bridge showing up as
   `/dev/sda`. No native SATA/AHCI.
 - **Power:** 802.3af PoE (≤12.95 W) **or** USB-C (QC 2.0, ≤16 W).
-- **Panel:** mono OLED on `/dev/fb0`; front button on `/dev/input/event1`.
+- **Panel:** 160×60 OLED on `/dev/fb0`; front button on `/dev/input/event1`.
 - **Fanless**, and there's an internal battery that can swell — read the safety
   notes below.
 
