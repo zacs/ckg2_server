@@ -71,24 +71,24 @@ fi
 # it as load-bearing too (never let a cascade drag it out).
 FORBIDDEN_RE='^(ck-ui|ubnt-tools|uck-tools|cloudkey-.*-base-files|.*-initramfs.*|linux-image-.*)$'
 
-# --- packages to purge (only those actually installed are acted on) ----------
-PACKAGES=(
-  unifi-assets-uckp unifi-assets-uckg2 unifi-email-templates-all
-  python3-unifi-console-protos
-  mongodb-server mongodb-clients mongodb-server-core
-  unifi unifi-core unifi-directory unifi-identity-update
-  uid-agent ucs-agent uos-agent uos-discovery-client uos ulp-go
-  ustd ubnt-systemhub ubnt-unifi-setup ucore-setup-listener
-)
-
-# Small batches: a failure isolates to a handful of packages, not all at once.
+# --- packages to purge, in small batches -------------------------------------
+# A failure isolates to a handful of packages, not all at once. Only packages
+# actually present (installed, or config files left) are acted on, so names
+# from other firmware versions are harmless. The last two batches were seen on
+# firmware 6.x: fluent-bit is UniFi OS's log shipper, and PostgreSQL 14 + 16
+# are UniFi's own databases (nothing kept needs them; install a fresh one later
+# if an app of yours wants Postgres — don't re-run this script after that).
 BATCHES=(
   "unifi-assets-uckp unifi-assets-uckg2 unifi-email-templates-all python3-unifi-console-protos"
   "mongodb-server mongodb-clients mongodb-server-core"
   "unifi unifi-core"
   "unifi-directory unifi-identity-update uid-agent ucs-agent uos-agent uos-discovery-client uos ulp-go"
-  "ustd ubnt-systemhub ubnt-unifi-setup ucore-setup-listener"
+  "ustd ubnt-systemhub ubnt-unifi-setup ucore-setup-listener fluent-bit"
+  "postgresql-14 postgresql-16 postgresql-client-14 postgresql-client-16 postgresql-client-common postgresql-common"
 )
+# One list, derived from the batches, so a package can't be approved by the
+# simulation below yet sit in no batch and never actually get purged.
+read -ra PACKAGES <<< "${BATCHES[*]}"
 
 # --- units to stop+disable (the supervisor/watchdog/updater layer) -----------
 # Disabling (not purging) is reversible and does not risk a package cascade.
@@ -109,7 +109,7 @@ UNITS=(
 
 installed_targets() {
   local p
-  for p in "${PACKAGES[@]}"; do pkg_installed "$p" && printf '%s\n' "$p"; done
+  for p in "${PACKAGES[@]}"; do pkg_present "$p" && printf '%s\n' "$p"; done
 }
 
 # Step 0: simulate the purge of everything installed and assert nothing in the
@@ -208,7 +208,7 @@ purge_batches() {
   local batch remaining
   for batch in "${BATCHES[@]}"; do
     remaining=""
-    for p in $batch; do pkg_installed "$p" && remaining+=" $p"; done
+    for p in $batch; do pkg_present "$p" && remaining+=" $p"; done
     [[ -z "$remaining" ]] && continue
 
     # Re-check the lock before each batch (a periodic run can start mid-way).

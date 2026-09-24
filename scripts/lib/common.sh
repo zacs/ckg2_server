@@ -76,10 +76,20 @@ ssh_alive() {
   return 0
 }
 
-# pkg_installed PKG — true if the package is in state installed (ii).
+# pkg_installed PKG — true only if the package is actually installed (ii).
+# (Uses the *status* field; the first letter of Status-Abbrev is only the
+# desired action, which is also "i" for a half-removed "ic" package.)
 pkg_installed() {
-  local st; st="$(dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null || true)"
-  [[ "$st" == i* ]]
+  local st; st="$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null || true)"
+  [[ "$st" == installed ]]
+}
+
+# pkg_present PKG — true if anything of the package is still on disk: installed,
+# half-installed/configured, or only config files left ("rc" / "ic"). This is
+# what a purge should target, so leftovers get cleaned up too.
+pkg_present() {
+  local st; st="$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null || true)"
+  [[ -n "$st" && "$st" != not-installed ]]
 }
 
 # on_os_storage PATH — true if PATH (or its nearest existing parent) lives on
