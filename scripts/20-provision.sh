@@ -22,7 +22,17 @@ require_root "$@"
 assert_cloudkey
 
 log "Architecture: kernel=$(uname -m)  userland=$(dpkg --print-architecture)"
-log "(A 64-bit aarch64 kernel with a 32-bit armhf userland is normal on this box.)"
+log "(Current firmware: aarch64 kernel + arm64 userland. Very old firmware shipped armhf.)"
+
+# Debian 11 "bullseye" (what current UniFi OS ships) left LTS on 2026-08-31:
+# the unattended-upgrades set up below keep running but receive NOTHING new.
+# Say so rather than let "automatic security updates" imply more than it does.
+. /etc/os-release 2>/dev/null || true
+if [[ "${VERSION_CODENAME:-}" == "bullseye" ]]; then
+  warn "This is Debian 11 (bullseye), which reached end-of-life on 2026-08-31 — no further"
+  warn "security updates will arrive. See 'Modernizing the userland' in docs/03-install-stock.md"
+  warn "before relying on this box for anything exposed."
+fi
 
 # --- 1. base tooling --------------------------------------------------------
 log "Installing base tooling…"
@@ -58,6 +68,8 @@ if [[ -f /etc/ssh/sshd_config ]]; then
 # To harden AFTER you've installed and TESTED an SSH key (see
 # docs/09-accounts-and-access.md), add here and reload sshd:
 #     PasswordAuthentication no
+#     ChallengeResponseAuthentication no   # OpenSSH 8.4 (bullseye) name...
+#     KbdInteractiveAuthentication no      # ...and the >= 8.7 name; set both
 #     PermitRootLogin prohibit-password
 X11Forwarding no
 ClientAliveInterval 120
@@ -87,19 +99,37 @@ fi
 # --- 4. firewall ------------------------------------------------------------
 # Default deny inbound, allow SSH. Add your own service ports afterwards, e.g.
 #   ufw allow 80/tcp
+# No `ufw reset` here: it would wipe every rule you've added each time this
+# "idempotent" script is re-run. The commands below are all no-ops when the
+# rule/policy already exists.
+# Allow the port(s) sshd ACTUALLY listens on (not the OpenSSH app profile,
+# which assumes 22 and only exists if openssh-server shipped it).
 log "Configuring ufw (default deny inbound, allow SSH)…"
-ufw --force reset >/dev/null
+SSH_PORTS="$(sshd -T 2>/dev/null | awk '$1=="port"{print $2}' | sort -u || true)"
+[[ -n "$SSH_PORTS" ]] || SSH_PORTS=22
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow OpenSSH
+for p in $SSH_PORTS; do ufw allow "$p/tcp" comment 'ssh'; done
 ufw --force enable
 
 # --- 5. timekeeping ---------------------------------------------------------
 # The RTC is backed by the PMIC + the internal battery pack (which can swell —
 # see the README safety note). Lean on NTP so a dead battery doesn't matter.
+# On bullseye systemd-timesyncd is its OWN package, so `timedatectl set-ntp`
+# fails ("NTP not supported") if nothing provides it. Use an existing NTP
+# daemon if there is one; otherwise install timesyncd (it Conflicts with the
+# others, so never install it alongside one).
 log "Enabling NTP time sync…"
-timedatectl set-ntp true 2>/dev/null || systemctl enable --now systemd-timesyncd 2>/dev/null || true
+NTPD=""
+for p in chrony ntp ntpsec openntpd; do pkg_installed "$p" && { NTPD="$p"; break; }; done
+if [[ -n "$NTPD" ]]; then
+  log "using the already-installed $NTPD for time sync."
+else
+  pkg_installed systemd-timesyncd || apt-get install -y --no-install-recommends systemd-timesyncd
+  timedatectl set-ntp true || systemctl enable --now systemd-timesyncd || \
+    warn "could not enable systemd-timesyncd — check: timedatectl status"
+fi
 
 ok "Provisioning complete."
-log "Next: ./30-mount-storage.sh /dev/sda   and   ./40-install-lcd.sh"
+log "Next: ./30-mount-storage.sh /dev/sda   then the panel: ./41-install-cloudkey.sh (or ./40-install-lcd.sh)"
 warn "Reminder: install an SSH key, verify key login, THEN disable password auth."

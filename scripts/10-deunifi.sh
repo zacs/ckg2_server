@@ -80,8 +80,11 @@ BATCHES=(
 
 # --- units to stop+disable (the supervisor/watchdog/updater layer) -----------
 # Disabling (not purging) is reversible and does not risk a package cascade.
-# uhwd = UniFi hardware watchdog; infctld = infra control daemon; the ck-splash
-# units and setup listeners re-trigger UniFi behaviour on boot.
+# uhwd = UniFi hardware watchdog; infctld = Ubiquiti's network-discovery daemon
+# (UDP 10001 + CDP; from the kept ubnt-tools package — disabled because nothing
+# needs it, not because it reboots anything); the ck-splash units and setup
+# listeners re-trigger UniFi behaviour on boot. ck-ui.service is deliberately
+# NOT here: it keeps driving the front panel until 40-/41-install-*.sh take it.
 UNITS=(
   uhwd.service infctld.service infctld-emergency.service
   ubnt-systemhub.service ubnt-unifi-setup.service ucore-setup-listener.service
@@ -109,8 +112,15 @@ simulate_gate() {
   # apt marks a purge as `Purg <pkg>` and a plain removal as `Remv <pkg>`; match
   # BOTH (matching only Remv silently misses every purge — and would make this
   # brick-guard inspect an empty set). LC_ALL=C keeps the tokens stable.
-  local sim
-  sim="$(LC_ALL=C apt-get -s purge $targets 2>/dev/null | awk '/^(Remv|Purg) /{print $2}')"
+  # Fail CLOSED: if the simulation itself errors (broken deps, bad state), the
+  # parsed list is empty and "nothing forbidden" would be vacuously true.
+  local raw sim
+  if ! raw="$(LC_ALL=C apt-get -s purge $targets 2>&1)"; then
+    err "ABORT: the purge simulation itself failed — can't vouch for what it would remove:"
+    printf '%s\n' "$raw" | tail -n 15 >&2
+    return 1
+  fi
+  sim="$(printf '%s\n' "$raw" | awk '/^(Remv|Purg) /{print $2}')"
   local bad; bad="$(printf '%s\n' "$sim" | grep -E "$FORBIDDEN_RE" || true)"
   if [[ -n "$bad" ]]; then
     err "ABORT: the purge would ALSO remove forbidden/bricking package(s):"
@@ -129,9 +139,11 @@ disable_units() {
   for u in "${UNITS[@]}"; do
     if systemctl list-unit-files "$u" >/dev/null 2>&1 && \
        systemctl cat "$u" >/dev/null 2>&1; then
-      log "disabling $u"
       if [[ "$APPLY" == "1" ]]; then
+        log "disabling $u"
         systemctl disable --now "$u" >/dev/null 2>&1 || warn "could not disable $u (may not exist)"
+      else
+        log "would disable $u"
       fi
     fi
   done
