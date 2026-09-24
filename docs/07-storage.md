@@ -105,11 +105,14 @@ For each service, three things (plus one if you turned the firewall on):
    missing, the service doesn't start at all (loud) instead of running on the
    eMMC (silent).
 
-3. **Check it runs on this userland.** Current UniFi OS is Debian 11, with
-   glibc 2.31. A prebuilt binary compiled against newer glibc fails with
+3. **Check it runs on this userland.** On firmware 6.x (Debian 13, glibc 2.41)
+   ordinary arm64 builds for current Debian/Ubuntu just work. On 5.x
+   (Debian 11, glibc 2.31) prebuilt binaries built against newer glibc fail with
    ``version `GLIBC_2.33' not found`` (jnovack hit this with Radarr's bundled
-   SQLite). Prefer Debian's own packages, static binaries (most Go programs), or
-   vendor builds that list Debian 11 / bullseye as supported.
+   SQLite) — one more reason to do the firmware prerequisite. Either way the
+   kernel is the old 3.18: anything that needs a modern kernel feature (e.g.
+   newer syscalls, cgroup v2) may still misbehave, so try it before you rely on
+   it.
 
 Firewall: by default there's none (same as stock Ubuntu), so nothing to do. If
 you ran `20-provision.sh --firewall`, also `sudo ufw allow <port>/tcp` (or

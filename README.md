@@ -149,8 +149,8 @@ Full teardown-level detail in [docs/01-hardware.md](docs/01-hardware.md). The
 highlights that affect how you use it:
 
 - **SoC:** Qualcomm APQ8053 (Snapdragon 625), 8× Cortex-A53. **aarch64 kernel**;
-  userland is firmware-dependent — **arm64** on current bullseye firmware, armhf
-  on older. Check with `uname -m` and `dpkg --print-architecture` (it decides
+  **arm64** userland — Debian 13 on 6.x firmware, Debian 11 on 5.x (very old
+  firmware was 32-bit armhf). Check with `uname -m` and `dpkg --print-architecture` (it decides
   which prebuilt binaries you can run).
 - **RAM / flash:** 3 GB (Plus) / 2 GB; 32 GB eMMC (`/dev/mmcblk0`). `/` is an
   overlay with only **~6 GB** of writable space — put anything big on `/volume`.

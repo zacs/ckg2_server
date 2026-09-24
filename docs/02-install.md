@@ -13,7 +13,7 @@ here means **removing the UniFi layer and its supervisor** and keeping the Debia
 underneath — which you then modernize and use as a server.
 
 What you keep: the stock aarch64 vendor kernel (`3.18.44-ui-qcom`) and the Debian
-userland (arm64 on current bullseye firmware; armhf on older). What you remove:
+userland (arm64; Debian 13 on firmware 6.x). What you remove:
 UniFi Network, Protect, MongoDB, the UniFi-OS
 agents, and the watchdog/auto-updater that cause the reboot behaviour.
 
@@ -155,9 +155,10 @@ Debian). `20-provision.sh` still sets up unattended-upgrades, which is only
 useful on a supported release. Check what you have: `cat /etc/os-release`.
 
 **The supported route: update the stock firmware.** Ubiquiti's **6.x** firmware
-for the Cloud Key runs a Debian 13 *trixie* base on this same 3.18 kernel (also
-seen by [hutchx86/cloudkey-unas](https://github.com/hutchx86/cloudkey-unas) on a
-stock Gen2 Plus). Ubiquiti's own tool does it over SSH:
+for the Cloud Key runs a Debian 13 *trixie* base on this same 3.18 kernel —
+verified here on a Gen2 Plus (6.0.10 → Debian 13.7), and also seen by
+[hutchx86/cloudkey-unas](https://github.com/hutchx86/cloudkey-unas). Ubiquiti's
+own tool does it over SSH:
 
 ```bash
 ubnt-systool fwupdate <URL>
@@ -168,7 +169,9 @@ ubnt-systool fwupdate <URL>
 It downloads the image to `/var/tmp`, reports the firmware string (e.g.
 `UCKP.apq8053.v6.0.10.8e20374.260922.0941`), stages it, and reboots to flash.
 It also works **after** `10-deunifi.sh` — `ubnt-systool` ships in a package
-de-UniFi keeps. Without SSH (or if it fails), use Recovery Mode instead
+de-UniFi keeps — and SSH access came through the update intact, so it can be
+done remotely (with the usual caveat that if a flash ever fails, Recovery Mode
+needs a hand on the reset button). Without SSH (or if it fails), use Recovery Mode instead
 ([04-recovery.md](04-recovery.md#restore-or-upgrade-stock-unifi-firmware)).
 
 Afterwards:

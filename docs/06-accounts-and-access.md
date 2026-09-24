@@ -109,7 +109,8 @@ sudo sshd -t && sudo systemctl reload ssh    # validate BEFORE it takes effect
 ```
 
 Why both `ChallengeResponseAuthentication` *and* `KbdInteractiveAuthentication`:
-bullseye ships **OpenSSH 8.4**, which honours only the old name; 8.7 renamed it.
+firmware 5.x (bullseye) ships **OpenSSH 8.4**, which honours only the old name;
+8.7 renamed it, and 6.x (trixie) ships a current OpenSSH that uses the new one.
 Setting just the new name parses cleanly on 8.4 but does nothing — and with
 `UsePAM yes`, keyboard-interactive can still carry a password login even with
 `PasswordAuthentication no`. Confirm with:

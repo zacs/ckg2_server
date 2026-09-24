@@ -36,14 +36,15 @@ assert_cloudkey
 log "Architecture: kernel=$(uname -m)  userland=$(dpkg --print-architecture)"
 log "(Current firmware: aarch64 kernel + arm64 userland. Very old firmware shipped armhf.)"
 
-# Debian 11 "bullseye" (what current UniFi OS ships) left LTS on 2026-08-31:
-# the unattended-upgrades set up below keep running but receive NOTHING new.
-# Say so rather than let "automatic security updates" imply more than it does.
+# Debian 11 "bullseye" (Cloud Key firmware 5.x and older) left LTS on
+# 2026-08-31: the unattended-upgrades set up below keep running but receive
+# NOTHING new. Firmware 6.x is Debian 13. Say so rather than let "automatic
+# security updates" imply more than it does.
 . /etc/os-release 2>/dev/null || true
 if [[ "${VERSION_CODENAME:-}" == "bullseye" ]]; then
   warn "This is Debian 11 (bullseye), which reached end-of-life on 2026-08-31 — no further"
-  warn "security updates will arrive. See 'Modernizing the userland' in docs/02-install.md"
-  warn "before relying on this box for anything exposed."
+  warn "security updates will arrive. Update the stock firmware to 6.x (Debian 13) first:"
+  warn "see 'Modernizing the userland' in docs/02-install.md."
 fi
 
 # --- 1. base tooling --------------------------------------------------------
@@ -139,7 +140,7 @@ fi
 # --- 5. timekeeping ---------------------------------------------------------
 # The RTC is backed by the PMIC + the internal battery pack (which can swell —
 # see the README safety note). Lean on NTP so a dead battery doesn't matter.
-# On bullseye systemd-timesyncd is its OWN package, so `timedatectl set-ntp`
+# Since Debian 11, systemd-timesyncd is its OWN package, so `timedatectl set-ntp`
 # fails ("NTP not supported") if nothing provides it. Use an existing NTP
 # daemon if there is one; otherwise install timesyncd (it Conflicts with the
 # others, so never install it alongside one).

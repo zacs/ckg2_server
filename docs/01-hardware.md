@@ -25,7 +25,7 @@ are Qualcomm's (`sbl1`, `devcfg`, `aboot`, …). Consequences:
 | Part | Component | Notes |
 |------|-----------|-------|
 | **SoC** | Qualcomm **APQ8053** (Snapdragon 625) | 8× Cortex-A53 up to 2.0 GHz, 14 nm, ARMv8-A. Adreno 506 GPU (unused, headless). |
-| **Kernel arch** | **aarch64** (64-bit), vendor `3.18.44-ui-qcom` | **Userland is firmware-dependent**: current UniFi OS (Debian 11 *bullseye*) ships a **64-bit arm64** userland on both Gen2 and Gen2 Plus (`dpkg --print-architecture` → `arm64`); older firmware was 32-bit **armhf**. Always check yours: `uname -m` **and** `dpkg --print-architecture`. This decides which prebuilt binaries you can run. The kernel also runs 32-bit ARM binaries (AArch32 compat). |
+| **Kernel arch** | **aarch64** (64-bit), vendor `3.18.44-ui-qcom` | **Userland is firmware-dependent**: firmware 6.x is Debian 13 *trixie* and 5.x is Debian 11 *bullseye*, both **64-bit arm64** on Gen2 and Gen2 Plus (`dpkg --print-architecture` → `arm64`); very old firmware was 32-bit **armhf**. The kernel stays `3.18.44-ui-qcom` across these. Always check yours: `uname -m` **and** `dpkg --print-architecture`. This decides which prebuilt binaries you can run. The kernel also runs 32-bit ARM binaries (AArch32 compat). |
 | **RAM** | **3 GB** LPDDR3 (Plus); 2 GB (non-Plus) | Part of an eMCP package (RAM+eMMC combined): Samsung `KMGX6001BM` on Plus, SK hynix `H9TQ26ABJTAC` on non-Plus. |
 | **Flash** | **32 GB eMMC** → `/dev/mmcblk0` (~29 GiB) | Qualcomm A/B-style partition layout. `/` is an **OverlayFS** whose persistent writable layer is a **~6 GB** partition — that, not 29 GiB, is the space for OS changes. A `/dev/mmcblk1` may also appear: most likely the **microSD slot**, not part of the eMMC — check with `cat /sys/block/mmcblk1/device/type` (`SD` vs `MMC`). |
 | **NIC** | **ASIX AX88179** USB 3.0 → Gigabit Ethernet | Driver `ax88179_178a`. **The NIC is on USB**, not PCIe/native MAC. |
@@ -86,7 +86,8 @@ Run these on your unit and compare to the table:
 
 ```bash
 uname -srm                      # kernel + arch (expect aarch64, 3.18.44-ui-qcom)
-dpkg --print-architecture       # userland arch (arm64 on bullseye firmware; armhf on older)
+dpkg --print-architecture       # userland arch (arm64 on current firmware; armhf on very old)
+cat /etc/os-release             # trixie = firmware 6.x; bullseye = 5.x (update it: 02-install.md)
 cat /proc/cpuinfo | grep -c ^processor   # core count (expect 8)
 free -h                         # RAM
 lsblk                           # mmcblk0 (eMMC) + sda (USB-SATA disk)
