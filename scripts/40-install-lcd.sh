@@ -6,7 +6,7 @@
 # owns it and will redraw over anything else, so we stop+disable it first, then
 # run cklcd's info screen as a systemd service.
 #
-# Idempotent. Run after 20-provision.sh (which installs python3-pil).
+# Idempotent. Installs its own dependencies (python3-pil, python3-qrcode, fonts).
 #
 # Usage: ./40-install-lcd.sh [-y]
 
@@ -22,8 +22,8 @@ require_root "$@"
 
 [[ -e /dev/fb0 ]] || warn "/dev/fb0 not present — is this a CloudKey with the OLED? Continuing anyway."
 
-# Dependencies (also installed by 20-provision.sh; re-checked here so this
-# script stands alone).
+# Dependencies: only cklcd needs Python + Pillow, so they're installed here
+# rather than by 20-provision.sh.
 if ! python3 -c 'import PIL' 2>/dev/null; then
   log "Installing python3-pil (Pillow) + fonts…"
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

@@ -47,16 +47,24 @@ if [[ "${VERSION_CODENAME:-}" == "bullseye" ]]; then
   warn "see 'Modernizing the userland' in docs/02-install.md."
 fi
 
-# --- 1. base tooling --------------------------------------------------------
-log "Installing base tooling…"
+# --- 1. base packages --------------------------------------------------------
+# Only what this repo's scripts need or what keeps the box healthy; anything
+# else is your call (e.g. `apt install htop tmux vim`).
+#   ca-certificates, curl  HTTPS downloads (apt, 41-install-cloudkey.sh)
+#   git                    fetch/update this repo
+#   rsync                  35-rehome-storage.sh copies directories with it
+#   e2fsprogs              mkfs.ext4 for 30-mount-storage.sh
+#   smartmontools          smartctl: health of the USB-attached SATA disk
+#   unattended-upgrades    automatic Debian security updates (step 2)
+# The panel tools bring their own deps (40-install-lcd.sh installs Python +
+# Pillow; the jnovack daemon is a static binary), and ufw only comes with
+# --firewall.
+log "Installing base packages…"
 export DEBIAN_FRONTEND=noninteractive
+PKGS=(ca-certificates curl git rsync e2fsprogs smartmontools unattended-upgrades)
+[[ "$FIREWALL" == "1" ]] && PKGS+=(ufw)
 apt-get update
-apt-get install -y --no-install-recommends \
-  ca-certificates curl wget gnupg \
-  htop tmux vim less rsync git \
-  ufw unattended-upgrades \
-  python3 python3-pil python3-qrcode fonts-dejavu-core \
-  smartmontools lm-sensors pv
+apt-get install -y --no-install-recommends "${PKGS[@]}"
 
 # --- 2. automatic security updates ------------------------------------------
 # The UniFi auto-updater is gone (disabled in 10-deunifi.sh); use Debian's own.

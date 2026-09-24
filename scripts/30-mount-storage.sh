@@ -53,6 +53,12 @@ assert_cloudkey
 case "$DEVICE" in
   /dev/mmcblk*) die "refusing to format $DEVICE — that's the eMMC (the OS lives there)." ;;
 esac
+# Tools this needs, checked up front so it can't fail after the wipe.
+command -v mkfs.ext4 >/dev/null 2>&1 || die "mkfs.ext4 not found — apt-get install -y e2fsprogs (20-provision.sh does)."
+if [[ "$USE_GPT" == "1" ]]; then
+  command -v sfdisk >/dev/null 2>&1 || die "--gpt needs sfdisk — apt-get install -y fdisk (or drop --gpt)."
+fi
+
 log "Target disk:"
 lsblk -o NAME,SIZE,FSTYPE,LABEL,MODEL,TRAN,MOUNTPOINT "$DEVICE" || lsblk "$DEVICE"
 echo
@@ -109,7 +115,7 @@ fi
 TARGET="$DEVICE"
 wipefs -a "$DEVICE"
 if [[ "$USE_GPT" == "1" ]]; then
-  # sfdisk ships with util-linux (always present), unlike parted/sgdisk.
+  # sfdisk (Debian package "fdisk") — checked above.
   log "Creating GPT + single partition…"
   printf 'label: gpt\n,,L\n' | sfdisk --wipe always "$DEVICE"
   # settle + pick the new partition node (sda1 / nvme0n1p1-style)
