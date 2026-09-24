@@ -126,7 +126,7 @@ should go and how to make it wait for the disk at boot.
 > **Where does the OS live? Where does my data go?** The OS stays on the **eMMC**
 > (`/dev/mmcblk0`, `/`) — nothing here reinstalls it. The SATA disk
 > (`/dev/sda` → `/volume`) is bulk storage and the place for anything
-> write-heavy: service data under `/volume/appdata/<app>`, and step 9 rehomes
+> write-heavy: service data under `/volume/appdata/<app>`, and step 8 rehomes
 > `/home`, `/srv`, and `/var/log` too. Full explanation:
 > [07-storage.md](07-storage.md).
 
