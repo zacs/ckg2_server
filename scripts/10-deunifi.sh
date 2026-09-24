@@ -204,8 +204,52 @@ stop_apt_background() {
   systemctl stop apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
 }
 
+# --- maintainer-script quirks seen on firmware 6.x ----------------------------
+# prep_postgres_manpages — PostgreSQL's removal script re-registers the
+# psql.1.gz man-page alternative, whose main file
+# (/usr/share/postgresql/<ver>/man/man1/psql.1.gz) this firmware image doesn't
+# ship. update-alternatives treats a missing main file as fatal, so the purge
+# dies ("alternative path ... doesn't exist"). An empty placeholder satisfies
+# it; missing secondary pages only warn. Removed again once Postgres is gone.
+prep_postgres_manpages() {
+  local p v f
+  for p in $(dpkg-query -W -f='${Package}\n' 'postgresql-[0-9]*' 'postgresql-client-[0-9]*' 2>/dev/null); do
+    pkg_present "$p" || continue
+    v="${p##*-}"; [[ "$v" =~ ^[0-9]+$ ]] || continue
+    f="/usr/share/postgresql/$v/man/man1/psql.1.gz"
+    [[ -e "$f" ]] && continue
+    mkdir -p "${f%/*}" && : > "$f"
+    log "placeholder $f (the firmware ships no man pages; PostgreSQL's removal script needs this one)"
+  done
+}
+
+# cleanup_postgres_placeholders — once no PostgreSQL package is left at all,
+# /usr/share/postgresql holds nothing but our placeholders.
+cleanup_postgres_placeholders() {
+  [[ -d /usr/share/postgresql ]] || return 0
+  dpkg-query -W -f='${db:Status-Status}\n' 'postgresql*' 2>/dev/null | grep -qvx 'not-installed' && return 0
+  rm -rf /usr/share/postgresql
+}
+
+# purge_leftover_configs PKG... — a package with only config files left
+# ("rc"/"ic") runs nothing but its postrm when purged. Some Ubiquiti postrm
+# scripts exit non-zero when the database they try to drop never existed
+# (seen: ucs-agent on 6.0.10), which blocks that purge forever. Its program
+# files are already gone, so skip the script and purge the dpkg record.
+purge_leftover_configs() {
+  local p st script
+  for p in "$@"; do
+    st="$(dpkg-query -W -f='${db:Status-Status}' "$p" 2>/dev/null || true)"
+    [[ "$st" == config-files ]] || continue
+    warn "$p: only config files were left and its purge script failed — skipping that script."
+    script="$(dpkg-query --control-path "$p" postrm 2>/dev/null || true)"
+    [[ -n "$script" && -f "$script" ]] && printf '#!/bin/sh\nexit 0\n' > "$script"
+    dpkg --purge "$p" || warn "dpkg --purge $p still failed"
+  done
+}
+
 purge_batches() {
-  local batch remaining
+  local batch remaining left
   for batch in "${BATCHES[@]}"; do
     remaining=""
     for p in $batch; do pkg_present "$p" && remaining+=" $p"; done
@@ -221,8 +265,16 @@ purge_batches() {
       if DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y $remaining; then
         ok "batch purged."
       else
-        PURGE_FAILURES=1
-        warn "batch FAILED (see apt error above): $remaining"
+        warn "apt reported errors for this batch — checking what's left…"
+        purge_leftover_configs $remaining
+        left=""
+        for p in $remaining; do pkg_present "$p" && left+=" $p"; done
+        if [[ -z "$left" ]]; then
+          ok "batch purged (after cleaning up config-only leftovers)."
+        else
+          PURGE_FAILURES=1
+          warn "batch FAILED — still present:$left (see the apt error above)"
+        fi
       fi
       if ! ssh_alive; then
         err "LIVENESS CHECK FAILED after this batch: sshd is not accepting connections."
@@ -257,6 +309,7 @@ main() {
   wait_apt_lock || die "apt lock never freed — nothing purged. Resolve and re-run."
 
   disable_units
+  prep_postgres_manpages
   purge_batches
 
   # If any batch failed, STOP: don't autoremove, don't claim success, don't tell
@@ -264,12 +317,15 @@ main() {
   if [[ "$PURGE_FAILURES" != "0" ]]; then
     echo
     err "PURGE INCOMPLETE — one or more batches failed (see errors above)."
-    err "The box is unchanged package-wise and safe, but the UniFi layer is NOT removed."
-    err "Fix the cause (usually a background apt run holding the lock), then re-run:"
+    err "Batches that reported success are done; the ones listed as FAILED are not, so the"
+    err "UniFi layer is only partly removed. Nothing load-bearing was touched (the"
+    err "simulation gate checked that). Re-running is safe — it only acts on what's left:"
     err "    sudo $0 --apply"
-    err "Do NOT reboot expecting a clean box until this reports success."
+    err "If the same package fails again, keep the output. Do NOT reboot expecting a clean"
+    err "box until this reports success."
     exit 1
   fi
+  cleanup_postgres_placeholders
 
   # Autoremove sweeps up orphaned deps — but simulate_gate never saw it, so guard
   # it the same way: skip it entirely if it would drag out a load-bearing package.
