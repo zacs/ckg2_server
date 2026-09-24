@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 # cklcd — control the front-panel LCD on a UniFi CloudKey Gen2 / Gen2 Plus.
 #
-# The panel is a plain Linux framebuffer (/dev/fb0), roughly 160x60, typically
-# 16bpp RGB565. There is NO microcontroller / serial protocol to talk to — you
-# just draw pixels into the mmap'd framebuffer. This tool reads the real
-# geometry and pixel format from the kernel at runtime (FBIOGET_VSCREENINFO /
-# FBIOGET_FSCREENINFO) so it works regardless of the exact mode.
+# The panel is a plain Linux framebuffer (/dev/fb0) — 160x60, 16bpp BGR565 on
+# stock firmware (driver fb_sp8110, over SPI). There is NO microcontroller /
+# serial protocol to talk to — you just draw pixels into the mmap'd
+# framebuffer. This tool reads the real geometry and pixel format from the
+# kernel at runtime (FBIOGET_VSCREENINFO / FBIOGET_FSCREENINFO) so it works
+# regardless of the exact mode.
 #
 # IMPORTANT: the stock UniFi UI daemon `ck-ui` also owns this framebuffer and
 # will fight you for it, redrawing over whatever you write. Stop it first:
-#     systemctl stop ck-ui        # (or disable it — see scripts/10-deunifi.sh)
+#     systemctl stop ck-ui        # (40-install-lcd.sh disables it for good;
+#                                 #  10-deunifi.sh deliberately leaves it alone)
 #
 # Subcommands:
 #     cklcd info            # live status screen (hostname/IP/uptime/load/temp/disk); loops
@@ -40,9 +42,10 @@ import time
 FBIOGET_VSCREENINFO = 0x4600
 FBIOGET_FSCREENINFO = 0x4602
 
-# fb_var_screeninfo: 8x u32 header, then red/green/blue/transp bitfields (3x u32 each).
-# We only need the header + the three colour bitfields' offset/length.
-_VAR_FMT = "@8I" + "3I" * 4
+# fb_var_screeninfo: 8x u32 header, then red/green/blue/transp bitfields (3x u32
+# each: offset, length, msb_right). We only unpack the header + red/green/blue —
+# 17 values, matching the tuple assignment in Framebuffer.__init__.
+_VAR_FMT = "@8I" + "3I" * 3
 
 # fb_fix_screeninfo up to and including line_length. Native alignment ("@")
 # inserts the padding the C struct has (2 bytes before line_length), and sizes
@@ -67,11 +70,10 @@ class Framebuffer:
          self.r_off, self.r_len, _rm,
          self.g_off, self.g_len, _gm,
          self.b_off, self.b_len, _bm) = v
-        # The panel is physically a monochrome OLED. Depending on the kernel
-        # driver it may advertise a truecolor RGB565 mode (in which case the
-        # bitfields below are non-zero and we pack colour that the panel renders
-        # as luminance) or a grayscale mode (grayscale flag set, or no colour
-        # bitfields). Detect the latter and pack luminance instead.
+        # Stock firmware advertises truecolor 16bpp BGR565 (non-zero colour
+        # bitfields; the offsets encode the B/R order, so _pack needs no
+        # special case). Other drivers may advertise a grayscale mode
+        # (grayscale flag set, or no colour bitfields) — pack luminance then.
         self.is_gray = bool(self.grayscale) or not (self.r_len or self.g_len or self.b_len)
 
         fbuf = bytearray(struct.calcsize(_FIX_FMT))
@@ -84,13 +86,10 @@ class Framebuffer:
 
         self.bytes_pp = self.bpp // 8
         if self.bytes_pp < 1:
+            os.close(self.fd)
             raise RuntimeError(
                 f"framebuffer reports {self.bpp}bpp (<8bpp packed modes are not "
-                f"supported by cklcd). Run `cklcd probe` and open an issue with "
-                f"the output.")
-        length = self.line_length * self.yres
-        if self.smem_len:
-            length = min(max(length, self.line_length * self.yres), self.smem_len) or length
+                f"supported by cklcd).")
         self.mem = mmap.mmap(self.fd, self.line_length * self.yres,
                              mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
 
@@ -222,7 +221,10 @@ def render_qr(fb, data):
     qr.add_data(data)
     qr.make(fit=True)
     code = qr.make_image(fill_color="white", back_color="black").convert("RGB")
-    side = min(fb.xres, fb.yres)
+    # Scale by a whole number so every module is the same size (a fractional
+    # NEAREST resize makes uneven modules that phone cameras struggle with).
+    scale = max(1, min(fb.xres, fb.yres) // code.width)
+    side = code.width * scale
     code = code.resize((side, side), Image.NEAREST)
     canvas = Image.new("RGB", (fb.xres, fb.yres), (0, 0, 0))
     canvas.paste(code, ((fb.xres - side) // 2, (fb.yres - side) // 2))
@@ -274,17 +276,31 @@ def mem_used_pct():
     return f"{100 * (total - avail) // total}%"
 
 
+def _zone_celsius(raw):
+    # Units are MIXED on this kernel: Qualcomm's 3.18-era tsens zones report
+    # whole degrees (42) while PMIC/battery zones report millidegrees (42000).
+    return raw / 1000 if abs(raw) >= 1000 else float(raw)
+
+
 def cpu_temp():
-    # Try the common thermal zone sysfs paths; qcom exposes several tsens zones.
-    for zone in sorted(_glob("/sys/class/thermal/thermal_zone*/temp")):
+    # Report the hottest SoC sensor (tsens/cpu zones); fall back to any zone.
+    soc, other = [], []
+    for zone in _glob("/sys/class/thermal/thermal_zone*"):
         try:
-            with open(zone) as fh:
-                milli = int(fh.read().strip())
-            if 0 < milli < 200000:
-                return f"{milli / 1000:.0f}C"
+            with open(os.path.join(zone, "temp")) as fh:
+                c = _zone_celsius(int(fh.read().strip()))
         except (OSError, ValueError):
             continue
-    return None
+        if not 0 < c < 150:
+            continue
+        try:
+            with open(os.path.join(zone, "type")) as fh:
+                ztype = fh.read().strip().lower()
+        except OSError:
+            ztype = ""
+        (soc if ("tsens" in ztype or "cpu" in ztype) else other).append(c)
+    temps = soc or other
+    return f"{max(temps):.0f}C" if temps else None
 
 
 def disk_pct(path):
@@ -342,6 +358,9 @@ def _open_fb(path):
              f"is this the right device (and the right hardware)?")
     except PermissionError:
         _die(f"permission denied opening {path}. Run as root (the service does).")
+    except RuntimeError as e:
+        _die(f"{e} Check /sys/class/graphics/fb0/bits_per_pixel (stock "
+             f"firmware is 16).")
     except OSError as e:
         _die(f"could not initialise framebuffer {path}: {e}\n"
              f"If another process (e.g. stock ck-ui) holds it, stop that first: "

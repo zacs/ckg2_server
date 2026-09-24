@@ -30,13 +30,15 @@ if ! python3 -c 'import PIL' 2>/dev/null; then
     python3-pil python3-qrcode fonts-dejavu-core
 fi
 
-# 1. Take the panel away from the stock UI.
-if systemctl list-unit-files ck-ui.service >/dev/null 2>&1; then
-  log "Stopping and disabling stock ck-ui.service…"
-  systemctl disable --now ck-ui.service 2>/dev/null || true
-else
-  log "ck-ui.service not present (already removed) — good."
-fi
+# 1. Take the panel away from whatever else drives it: the stock ck-ui (still
+#    installed — 10-deunifi.sh deliberately keeps the package) and the
+#    jnovack daemon if 41-install-cloudkey.sh was run earlier.
+for svc in ck-ui.service cloudkey.service; do
+  if systemctl cat "$svc" >/dev/null 2>&1; then
+    log "disabling $svc (only one process may own /dev/fb0)…"
+    systemctl disable --now "$svc" 2>/dev/null || true
+  fi
+done
 
 # 2. Install the tool.
 log "Installing cklcd to /usr/local/bin/cklcd…"
