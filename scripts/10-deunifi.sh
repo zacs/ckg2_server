@@ -244,7 +244,8 @@ main() {
   if [[ "$APPLY" != "1" ]]; then
     warn "DRY RUN. Nothing was changed."
     log  "Re-run with --apply to purge the packages above and disable the UniFi/watchdog units."
-    log  "STRONGLY recommended first: ./00-preflight-backup.sh <disk>/emmc-backup.img"
+    log  "STRONGLY recommended first: a full eMMC backup (README step 0), e.g. from your workstation:"
+    log  "    ssh root@<cloudkey> 'gzip -1 < /dev/mmcblk0' > cloudkey-emmc.img.gz && gzip -t cloudkey-emmc.img.gz"
     exit 0
   fi
 
