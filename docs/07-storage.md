@@ -83,7 +83,7 @@ working here since. So install what you need directly: `apt install` it, or use
 the app's own Linux installer. On current firmware the userland is **arm64**,
 which nearly everything ships for.
 
-For each service, four things:
+For each service, three things (plus one if you turned the firewall on):
 
 1. **Put its data on the disk.** Point the app's data/config directory at
    `/volume/appdata/<app>` (usually a setting, a command-line flag, or the
@@ -105,14 +105,15 @@ For each service, four things:
    missing, the service doesn't start at all (loud) instead of running on the
    eMMC (silent).
 
-3. **Open its port.** `20-provision.sh` sets ufw to deny incoming by default, so
-   `sudo ufw allow <port>/tcp` (or `/udp`) for anything the LAN should reach.
-
-4. **Check it runs on this userland.** Current UniFi OS is Debian 11, with
+3. **Check it runs on this userland.** Current UniFi OS is Debian 11, with
    glibc 2.31. A prebuilt binary compiled against newer glibc fails with
    ``version `GLIBC_2.33' not found`` (jnovack hit this with Radarr's bundled
    SQLite). Prefer Debian's own packages, static binaries (most Go programs), or
    vendor builds that list Debian 11 / bullseye as supported.
+
+Firewall: by default there's none (same as stock Ubuntu), so nothing to do. If
+you ran `20-provision.sh --firewall`, also `sudo ufw allow <port>/tcp` (or
+`/udp`) for anything the LAN should reach.
 
 Logs: services that log to the journal are covered by the journald cap below;
 ones that write their own log files should write them under `/volume` (or under

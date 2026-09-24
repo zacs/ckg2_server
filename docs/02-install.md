@@ -76,7 +76,10 @@ sudo reboot
 cd ckg2_server/scripts
 sudo ./99-verify.sh
 
-# 6. Provision the server (tools, firewall, auto-updates, NTP):
+# 6. Provision the server (tools, auto-updates, NTP). No firewall is switched on,
+#    same as a stock Ubuntu/Debian install: anything you install is reachable on
+#    your LAN without per-app rules. Add --firewall if you want ufw on
+#    (deny incoming + allow SSH; then each app needs `ufw allow <port>`).
 sudo ./20-provision.sh
 
 # 7. Format + persistently mount the internal 2.5" disk (shows up as /dev/sda).
@@ -98,8 +101,8 @@ sudo ./35-rehome-storage.sh                    # move /home + /srv + /var/log on
 sudo ./99-verify.sh
 ```
 
-You now have a plain Debian box with `/volume` for bulk data, a firewall, a
-status screen, and no UniFi reboots. Install whatever you like with
+You now have a plain Debian box with `/volume` for bulk data, a status screen,
+and no UniFi reboots. Install whatever you like with
 `apt install …` or an app's own Linux installer — see
 [07-storage.md](07-storage.md#running-your-own-services) for where its data
 should go and how to make it wait for the disk at boot.
@@ -124,7 +127,7 @@ should go and how to make it wait for the disk at boot.
 | `00-preflight-backup.sh` | Full eMMC image to a file | Refuses to write onto the eMMC itself; records a sha256 |
 | `05-add-ssh-key.sh` | Install an SSH key for root (or a user) before surgery | Only *adds* a key; never disables password auth or restricts login → can't lock you out |
 | `10-deunifi.sh` | Purge UniFi apps + disable supervisor/watchdog | **Dry-run by default**; simulate-gate aborts on any cascade into `ck-ui`/`ubnt-tools`/`*-base-files`/initramfs/kernel; batched purge with SSH liveness check between batches |
-| `20-provision.sh` | Base tooling, ufw, unattended-upgrades, NTP, light SSH hardening | Idempotent; does **not** disable password auth (won't lock you out) |
+| `20-provision.sh` | Base tooling, unattended-upgrades, NTP, light SSH hardening; ufw only with `--firewall` | Idempotent; does **not** disable password auth (won't lock you out); never flips ufw on or off unless asked |
 | `30-mount-storage.sh` | ext4 + systemd `.mount` for `/dev/sda` | Refuses the eMMC; lists UniFi's old partitions/swap still in use and releases them only after you confirm; flags `/etc/fstab` lines that point at the disk; uses a `.mount` unit (survives the fstab rewrite) |
 | `35-rehome-storage.sh` | Bind-mount `/home`, `/srv`, `/var/log` onto `/volume/rehome/` | Copies (never deletes) originals; requires `/volume` on the SATA disk; skips symlinked or already-mounted targets; `nofail` bind units (survive a dead disk), not fstab, not symlinks |
 | `40-install-lcd.sh` | Install lightweight `cklcd` + service, disable stock `ck-ui` | Idempotent; probes `/dev/fb0` first |

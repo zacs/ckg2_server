@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # 20-provision.sh — turn the reclaimed Debian into a pleasant little server:
-# base tooling, sane SSH, a firewall, automatic security updates, and the
-# housekeeping that keeps UniFi's leftovers from getting in the way.
+# base tooling, sane SSH, automatic updates, time sync, and the housekeeping
+# that keeps UniFi's leftovers from getting in the way.
+#
+# Firewall: like a stock Debian/Ubuntu install, ufw is installed but left OFF,
+# so anything you install is reachable on the LAN with no per-app rules. Pass
+# --firewall to turn on ufw (deny incoming, allow SSH) instead; then every app
+# needs a `ufw allow <port>`.
 #
 # Idempotent: safe to run more than once. Everything it writes lives in places
 # the CloudKey's boot hooks do NOT rewrite (see the /etc/fstab caveat in
@@ -9,14 +14,21 @@
 #
 # Run AFTER 10-deunifi.sh and a reboot.
 #
-# Usage: ./20-provision.sh [-y]
+# Usage: ./20-provision.sh [-y] [--firewall]
 
 set -euo pipefail
 cd "$(dirname "$0")"
 . lib/common.sh
 
 ASSUME_YES=0
-[[ "${1:-}" == "-y" ]] && ASSUME_YES=1
+FIREWALL=0
+for a in "$@"; do
+  case "$a" in
+    -y) ASSUME_YES=1 ;;
+    --firewall) FIREWALL=1 ;;
+    *) die "unknown argument: $a (use -y and/or --firewall)" ;;
+  esac
+done
 
 require_root "$@"
 assert_cloudkey
@@ -96,21 +108,33 @@ EOF
   fi
 fi
 
-# --- 4. firewall ------------------------------------------------------------
-# Default deny inbound, allow SSH. Add your own service ports afterwards, e.g.
-#   ufw allow 80/tcp
-# No `ufw reset` here: it would wipe every rule you've added each time this
-# "idempotent" script is re-run. The commands below are all no-ops when the
-# rule/policy already exists.
-# Allow the port(s) sshd ACTUALLY listens on (not the OpenSSH app profile,
-# which assumes 22 and only exists if openssh-server shipped it).
-log "Configuring ufw (default deny inbound, allow SSH)…"
-SSH_PORTS="$(sshd -T 2>/dev/null | awk '$1=="port"{print $2}' | sort -u || true)"
-[[ -n "$SSH_PORTS" ]] || SSH_PORTS=22
-ufw default deny incoming
-ufw default allow outgoing
-for p in $SSH_PORTS; do ufw allow "$p/tcp" comment 'ssh'; done
-ufw --force enable
+# --- 4. firewall (opt-in) ---------------------------------------------------
+# Default: leave it alone. ufw is installed but inactive, exactly like a stock
+# Ubuntu install, so a newly installed app is reachable with no extra steps.
+# Without --firewall this script never enables OR disables ufw, so a choice
+# you made by hand survives re-runs.
+if [[ "$FIREWALL" == "1" ]]; then
+  # Default deny inbound, allow SSH. Add your own service ports afterwards,
+  # e.g. `ufw allow 80/tcp`. No `ufw reset`: it would wipe your rules on every
+  # re-run; the commands below are no-ops when the rule/policy already exists.
+  # Allow the port(s) sshd ACTUALLY listens on (not the OpenSSH app profile,
+  # which assumes 22 and only exists if openssh-server shipped it).
+  log "Configuring ufw (default deny inbound, allow SSH)…"
+  SSH_PORTS="$(sshd -T 2>/dev/null | awk '$1=="port"{print $2}' | sort -u || true)"
+  [[ -n "$SSH_PORTS" ]] || SSH_PORTS=22
+  ufw default deny incoming
+  ufw default allow outgoing
+  for p in $SSH_PORTS; do ufw allow "$p/tcp" comment 'ssh'; done
+  ufw --force enable
+  warn "Firewall ON: each app you install needs its port opened, e.g. sudo ufw allow 3000/tcp"
+elif ufw status 2>/dev/null | grep -q '^Status: active'; then
+  log "ufw is active (enabled earlier) — leaving it as is. To go back to the"
+  log "stock-Ubuntu behaviour (no per-app rules), run: sudo ufw disable"
+else
+  log "Firewall: off (stock Debian/Ubuntu default). Every listening service is"
+  log "reachable on the LAN — fine behind a router; don't port-forward to this box."
+  log "Want one anyway? Re-run with --firewall."
+fi
 
 # --- 5. timekeeping ---------------------------------------------------------
 # The RTC is backed by the PMIC + the internal battery pack (which can swell —

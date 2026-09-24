@@ -56,7 +56,7 @@ sudo ./10-deunifi.sh --apply                             # 3. remove UniFi + dis
 sudo reboot                                              # 4. reboot by hand, then SSH back in
 
 sudo ./99-verify.sh                                      # 5. confirm a clean boot
-sudo ./20-provision.sh                                   # 6. tools, firewall, auto-updates, NTP
+sudo ./20-provision.sh                                   # 6. tools, auto-updates, NTP (firewall: opt-in)
 sudo ./30-mount-storage.sh /dev/sda                      # 7. WIPE + mount the 2.5" disk at /volume
                                                          #    (UniFi's old partitions — check for Protect footage first)
 sudo ./41-install-cloudkey.sh                            # 8. rich OLED daemon (LEDs, button, web dashboard)
@@ -65,9 +65,11 @@ sudo ./35-rehome-storage.sh                              # 9. (optional) /home +
 sudo ./99-verify.sh                                      # 10. final health check
 ```
 
-That's it — a Debian box with `/volume` for bulk data, a firewall, unattended
-upgrades, and the front panel showing hostname / IP / uptime. `apt install`
-whatever you want from here.
+That's it — a Debian box with `/volume` for bulk data, unattended upgrades, and
+the front panel showing hostname / IP / uptime. `apt install` whatever you want
+from here. Like a stock Ubuntu install, there's no firewall switched on, so an
+app you install is reachable on your LAN without extra rules (opt in with
+`20-provision.sh --firewall` if you want one).
 
 > **Heads-up — Debian 11 is end-of-life.** Current UniFi OS is Debian 11
 > *bullseye*, whose LTS ended on **2026-08-31**: unattended-upgrades is set up,
@@ -181,7 +183,7 @@ ckg2_server/
 │   ├── 00-preflight-backup.sh    image the eMMC to a file (safety net)
 │   ├── 05-add-ssh-key.sh         install + verify an SSH key before surgery (no lockout)
 │   ├── 10-deunifi.sh             remove UniFi + disable the supervisor/watchdog (dry-run by default)
-│   ├── 20-provision.sh           base tools, ufw, unattended-upgrades, NTP, SSH hardening
+│   ├── 20-provision.sh           base tools, unattended-upgrades, NTP, SSH defaults, opt-in ufw
 │   ├── 30-mount-storage.sh       format + persistently mount /dev/sda (systemd .mount, not fstab)
 │   ├── 35-rehome-storage.sh      bind /home, /srv, /var/log onto /volume (nofail) to spare the eMMC
 │   ├── 40-install-lcd.sh         install the lightweight cklcd panel tool + service

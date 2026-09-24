@@ -89,8 +89,10 @@ if timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -qx yes; then
 else
   warn "clock NOT NTP-synchronised yet (timedatectl status) — TLS/apt break if it drifts far"
 fi
-if command -v ufw >/dev/null 2>&1; then
-  log "firewall: $(ufw status 2>/dev/null | head -1)"
+if ufw status 2>/dev/null | grep -q '^Status: active'; then
+  log "firewall: ufw ACTIVE — new services need 'ufw allow <port>' to be reachable"
+else
+  log "firewall: off (stock default) — listening services are reachable on the LAN"
 fi
 
 echo; echo "== panel =="
