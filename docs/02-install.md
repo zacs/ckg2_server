@@ -101,14 +101,14 @@ sudo ./20-provision.sh
 #    The script shows what's in use and releases it only after you confirm.
 sudo ./30-mount-storage.sh /dev/sda            # → /volume
 
-# 8. Take over the OLED. Pick ONE (only one process may own /dev/fb0):
+# 8. (optional) Keep writes off the soldered eMMC — see docs/07-storage.md:
+sudo ./35-rehome-storage.sh                    # move /home + /var/log (+ /srv if present) onto /volume
+sudo reboot                                    # activates the /var/log move
+
+# 9. Take over the OLED. Pick ONE (only one process may own /dev/fb0):
 sudo ./41-install-cloudkey.sh                  # featured: jnovack daemon (LEDs, button, web UI)
 #   -- or the lightweight text-only tool instead --
 # sudo ./40-install-lcd.sh                      # this repo's minimal cklcd
-
-# 9. (optional) Keep writes off the soldered eMMC — see docs/07-storage.md:
-sudo ./35-rehome-storage.sh                    # move /home + /var/log (+ /srv if present) onto /volume
-sudo reboot                                    # activates the /var/log move
 
 # 10. Final health check:
 sudo ./99-verify.sh

@@ -70,16 +70,16 @@ sudo ./99-verify.sh                                      # 5. confirm a clean bo
 sudo ./20-provision.sh                                   # 6. tools, auto-updates, NTP (firewall: opt-in)
 sudo ./30-mount-storage.sh /dev/sda                      # 7. WIPE + mount the 2.5" disk at /volume
                                                          #    (UniFi's old partitions — check for Protect footage first)
-sudo ./41-install-cloudkey.sh                            # 8. rich OLED daemon (LEDs, button, web dashboard)
-
-sudo ./35-rehome-storage.sh                              # 9. (optional) /home + /var/log (+ /srv if present) onto the SATA disk
+sudo ./35-rehome-storage.sh                              # 8. (optional) /home + /var/log (+ /srv if present) onto the SATA disk
 sudo reboot                                              #    activates the /var/log move
+sudo ./41-install-cloudkey.sh                            # 9. front panel: jnovack daemon (LEDs, button, web dashboard)
+                                                         #    (or ./40-install-lcd.sh for the minimal cklcd — pick one)
 sudo ./99-verify.sh                                      # 10. final health check
 ```
 
 ### Then: your own admin user (recommended)
 
-Up to here you're `root`. Once `/home` is on the SATA disk (step 9), make a
+Up to here you're `root`. Once `/home` is on the SATA disk (step 8), make a
 normal user with sudo and your SSH key, so day-to-day work doesn't happen as
 root:
 
