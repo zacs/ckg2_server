@@ -6,9 +6,18 @@
 # It rehomes each directory with a systemd BIND .mount unit — never /etc/fstab,
 # which the CloudKey's base-files package rewrites on every boot (see
 # docs/07-watchdog-and-persistence.md). For each target it:
-#   1. rsyncs the current contents to <base>/<name>,
-#   2. writes /etc/systemd/system/<escaped>.mount  (What=<base>/<name>, bind),
+#   1. rsyncs the current contents to <base>/rehome/<name>,
+#   2. writes /etc/systemd/system/<escaped>.mount  (What=<base>/rehome/<name>, bind),
 #   3. activates it (or, for /var/log, defers to the next boot — see below).
+#
+# Why the extra "rehome/" level: a UniFi boot hook that stays installed
+# (`mp-clean volume`) deletes EMPTY directories directly under /volume on every
+# boot. /srv is usually empty, so /volume/srv would vanish at the next boot and
+# its bind would silently fail back to the eMMC. Nesting keeps them out of reach.
+#
+# Skipped on purpose: a target that is a SYMLINK (UniFi's boot hooks manage
+# some links, e.g. the *-srv-link hooks — rsyncing a link that points into
+# /volume would copy /volume into itself) or that is already its own mount.
 #
 # Defaults: /home, /srv, and /var/log (system logs — a steady eMMC drip you want
 # gone). /home and /srv bind live; /var/log's bind is installed but takes effect
@@ -33,7 +42,7 @@
 # anything already rehomed.
 #
 # Usage:
-#   ./35-rehome-storage.sh                 # rehome /home + /srv + /var/log to /volume/*
+#   ./35-rehome-storage.sh                 # rehome /home + /srv + /var/log to /volume/rehome/*
 #   ./35-rehome-storage.sh --no-var-log    # leave system logs on the eMMC
 #   ./35-rehome-storage.sh --base /srv/data
 #   ./35-rehome-storage.sh -n              # dry run: show the plan, change nothing
@@ -68,11 +77,13 @@ command -v rsync >/dev/null 2>&1 || die "rsync not found — run 20-provision.sh
 findmnt -rno TARGET "$BASE" >/dev/null 2>&1 || \
   die "$BASE is not a mountpoint. Run 30-mount-storage.sh first (it mounts /dev/sda at /volume)."
 BASE_SRC="$(findmnt -rno SOURCE "$BASE" 2>/dev/null || true)"
-case "$BASE_SRC" in
-  /dev/mmcblk*) die "$BASE is backed by the eMMC ($BASE_SRC) — rehoming there saves nothing." ;;
-esac
+if on_os_storage "$BASE"; then
+  die "$BASE is backed by the eMMC ($BASE_SRC) — rehoming there saves nothing."
+fi
 log "Rehome base: $BASE  (on $BASE_SRC)"
 [[ "$DRYRUN" == "1" ]] && warn "DRY RUN — no changes will be made."
+
+REHOME_ROOT="$BASE/rehome"
 
 # Build the target list. Format: "src" (name is derived from the path tail).
 TARGETS=(/home /srv)
@@ -85,16 +96,26 @@ rehome_dir() {
   local src="$1" live_ok="$2"
   local name dst unit
   name="${src#/}"; name="${name//\//-}"      # /var/log -> var-log
-  dst="$BASE/$name"
+  dst="$REHOME_ROOT/$name"
   unit="$(systemd-escape -p --suffix=mount "$src")"
 
-  # Already rehomed? (src is a mount whose source path lives under $BASE)
-  if findmnt -rno SOURCE "$src" 2>/dev/null | grep -q "^$BASE\b"; then
-    ok "$src already rehomed to $BASE — skipping."
+  if [[ -L "$src" ]]; then
+    warn "$src is a symlink (-> $(readlink "$src")) — skipping; likely managed by a UniFi boot hook."
     return 0
   fi
   if [[ ! -d "$src" ]]; then
     warn "$src does not exist — skipping."
+    return 0
+  fi
+  # Already a mountpoint? findmnt shows a bind as "<device>[/subpath]", so
+  # compare against the disk behind $BASE rather than the $BASE path.
+  local cur; cur="$(findmnt -rno SOURCE "$src" 2>/dev/null || true)"
+  if [[ -n "$cur" ]]; then
+    if [[ "$cur" == "${BASE_SRC}["* ]]; then
+      ok "$src already rehomed ($cur) — skipping."
+    else
+      warn "$src is already its own mount ($cur) — leaving it alone."
+    fi
     return 0
   fi
 
@@ -108,6 +129,7 @@ rehome_dir() {
   fi
 
   mkdir -p "$dst"
+  touch "$REHOME_ROOT/.keep"     # belt-and-braces against the mp-clean hook
   # -S sparse, -H hardlinks, -A ACLs, -X xattrs, --numeric-ids: a faithful copy.
   rsync -aHAXS --numeric-ids "$src"/ "$dst"/
 
@@ -160,7 +182,7 @@ if [[ "$DO_VARLOG" == "1" ]]; then
   else
     mkdir -p /etc/systemd/journald.conf.d
     cat > /etc/systemd/journald.conf.d/10-ckg2-cap.conf <<'EOF'
-# ckg2_server — bound the on-disk journal so logs don't fill /volume/log.
+# ckg2_server — bound the on-disk journal so logs don't fill /volume/rehome/var-log.
 [Journal]
 SystemMaxUse=200M
 SystemMaxFileSize=50M

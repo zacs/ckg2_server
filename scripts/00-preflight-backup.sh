@@ -69,7 +69,9 @@ if [[ "$STDOUT" == 1 ]]; then
   # Logs must go to stderr so they don't corrupt the image on stdout.
   log "Streaming a full image of $SRC ($(numfmt --to=iec "$SIZE_BYTES" 2>/dev/null || echo "$SIZE_BYTES B")) to stdout…" >&2
   log "(pipe it through a compressor and/or ssh; nothing is written locally)" >&2
-  dd if="$SRC" bs=4M conv=noerror,sync status=progress
+  # No conv=noerror,sync: in a backup, a read error must FAIL loudly, not be
+  # silently zero-filled into an image you'll only discover is bad at restore.
+  dd if="$SRC" bs=4M status=progress
   exit 0
 fi
 
@@ -82,10 +84,11 @@ if [[ ! -d "$OUTDIR" ]]; then
   exit 1
 fi
 
-# Refuse to write the image onto the very device we're imaging.
+# Refuse to write the image onto the very device we're imaging. (on_os_storage
+# also catches the overlay root, which findmnt reports as "overlay", not mmcblk0.)
 OUT_SRC="$(findmnt -no SOURCE --target "$OUTDIR" 2>/dev/null || true)"
-if [[ "$OUT_SRC" == /dev/mmcblk0* ]]; then
-  die "refusing to write the backup onto the eMMC we're imaging ($OUT_SRC). Use the SATA disk or stream over the network (--stdout)."
+if on_os_storage "$OUTDIR"; then
+  die "refusing to write the backup onto the eMMC we're imaging ($OUTDIR is on ${OUT_SRC:-the root filesystem}). Use the SATA disk or stream over the network (--stdout)."
 fi
 
 AVAIL_BYTES="$(( $(stat -f -c '%a*%S' "$OUTDIR") ))"
@@ -108,7 +111,7 @@ log "Imaging… (several minutes; the eMMC is ~29 GiB)"
 if command -v pv >/dev/null 2>&1; then
   pv -s "$SIZE_BYTES" "$SRC" | "${COMP[@]}" > "$OUT"
 else
-  dd if="$SRC" bs=4M conv=noerror,sync status=progress | "${COMP[@]}" > "$OUT"
+  dd if="$SRC" bs=4M status=progress | "${COMP[@]}" > "$OUT"
 fi
 sync
 

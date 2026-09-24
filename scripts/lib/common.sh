@@ -81,3 +81,17 @@ pkg_installed() {
   local st; st="$(dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null || true)"
   [[ "$st" == i* ]]
 }
+
+# on_os_storage PATH — true if PATH (or its nearest existing parent) lives on
+# the box's own OS storage rather than the SATA disk / a network share.
+# Don't just test findmnt's SOURCE for /dev/mmcblk*: on current firmware / is
+# an OVERLAY (its writable layer is a ~6 GB eMMC partition), so findmnt reports
+# "overlay" (or /dev/root), which a /dev/mmcblk* pattern silently misses.
+# Comparing the filesystem's device number with /'s catches every variant.
+on_os_storage() {
+  local p="$1" src
+  while [[ ! -e "$p" && "$p" != / ]]; do p="$(dirname "$p")"; done
+  [[ "$(stat -c %d "$p" 2>/dev/null)" == "$(stat -c %d / 2>/dev/null)" ]] && return 0
+  src="$(findmnt -rno SOURCE -T "$p" 2>/dev/null || true)"
+  [[ "$src" == /dev/mmcblk* || "$src" == /dev/root || "$src" == overlay* ]]
+}

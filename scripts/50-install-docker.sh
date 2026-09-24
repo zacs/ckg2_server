@@ -4,15 +4,24 @@
 # per-container logs so a chatty container can't fill the disk. Rationale and the
 # storage map are in docs/10-storage-and-docker.md.
 #
+# READ FIRST: Docker on this box is EXPERIMENTAL. The stock 3.18 kernel predates
+# overlay2, and jnovack's runbook (tested on real Gen2/Gen2+) tried Docker and
+# gave up. vfs (chosen below) avoids the overlay problem, but nobody has proven
+# a real multi-layer image runs here yet. Smoke-test before building on it (the
+# script prints a test command), and see docs/10-storage-and-docker.md.
+#
 # What it does:
 #   1. Installs Docker (Debian's `docker.io` by default — the reliable choice on
-#      this armhf / old-kernel box; --get-docker uses the get.docker.com script).
+#      this old-kernel box; --get-docker uses the get.docker.com script).
 #   2. Writes /etc/docker/daemon.json with:
 #        - data-root -> /volume/docker   (images, layers, named volumes, logs)
 #        - json-file log driver capped at 3 x 10 MB per container
 #        - a storage-driver chosen for the running kernel (overlay2 if supported,
 #          else vfs — correct, just space-heavy, which is fine on the big disk).
 #   3. Migrates any existing /var/lib/docker into the new data-root if present.
+#   4. Makes docker.service REQUIRE the disk (RequiresMountsFor=<data-root>), so
+#      on a cold boot dockerd can't start before the USB disk mounts and quietly
+#      create a fresh, empty data-root on the eMMC underneath the mountpoint.
 #
 # Run AFTER 30-mount-storage.sh (needs /volume). Idempotent.
 #
@@ -46,21 +55,36 @@ require_root
 assert_cloudkey
 
 # --- sanity: data-root must live on the SATA disk, not the eMMC ---------------
+# (on_os_storage also catches the overlay root, which findmnt calls "overlay".)
 DR_PARENT="$(dirname "$DATA_ROOT")"
-if findmnt -rno TARGET "$DR_PARENT" >/dev/null 2>&1; then
-  DR_SRC="$(findmnt -rno SOURCE "$DR_PARENT" 2>/dev/null || true)"
+DR_SRC="$(findmnt -rno SOURCE -T "$DR_PARENT" 2>/dev/null || true)"
+if on_os_storage "$DR_PARENT"; then
+  warn "data-root $DATA_ROOT resolves onto the eMMC (${DR_SRC:-root filesystem})."
+  warn "That defeats the purpose: the writable root is only a ~6 GB overlay partition,"
+  warn "and it wears the soldered eMMC. Run 30-mount-storage.sh first, or pass"
+  warn "--data-root under a disk mount."
+  confirm "Install anyway with data-root on the eMMC?" || die "aborted."
 else
-  DR_SRC="$(findmnt -rno SOURCE -T "$DR_PARENT" 2>/dev/null || true)"
+  log "data-root $DATA_ROOT is on $DR_SRC (good — off the eMMC)."
 fi
-case "$DR_SRC" in
-  /dev/mmcblk*|"")
-    warn "data-root $DATA_ROOT resolves onto the eMMC (${DR_SRC:-unknown})."
-    warn "That defeats the purpose (eMMC wear/space). Run 30-mount-storage.sh first,"
-    warn "or pass --data-root under a disk mount."
-    confirm "Install anyway with data-root on the eMMC?" || die "aborted."
-    ;;
-  *) log "data-root $DATA_ROOT is on $DR_SRC (good — off the eMMC)." ;;
-esac
+
+# --- sanity: kernel features dockerd/runc can't work without -------------------
+# /proc shows which namespaces and cgroup controllers this kernel was built
+# with — no kernel config file needed. Warn instead of failing mysteriously later.
+MISSING=()
+for ns in mnt uts ipc pid net; do [[ -e /proc/self/ns/$ns ]] || MISSING+=("${ns} namespace"); done
+for cg in cpu cpuacct cpuset memory devices freezer; do
+  awk -v c="$cg" '$1==c && $4==1 {f=1} END {exit !f}' /proc/cgroups 2>/dev/null || MISSING+=("cgroup:$cg")
+done
+if (( ${#MISSING[@]} )); then
+  warn "this kernel lacks features Docker relies on: ${MISSING[*]}"
+  warn "dockerd may fail to start or containers may break. (A fuller check is"
+  warn "/usr/share/docker.io/contrib/check-config.sh after install, if the kernel"
+  warn "exposes its config at /proc/config.gz.)"
+  confirm "Install anyway?" || die "aborted."
+else
+  log "kernel exposes the namespaces + cgroup controllers Docker needs."
+fi
 
 # --- pick a storage driver the kernel can actually run ------------------------
 # overlay2 wants kernel >= 4.0; the stock CloudKey kernel is 3.18, where it's
@@ -147,7 +171,22 @@ cat > /etc/docker/daemon.json <<EOF
 EOF
 ok "Wrote /etc/docker/daemon.json"
 
-# --- 5. (re)start and confirm ------------------------------------------------
+# --- 5. don't let dockerd start before its data-root's disk is mounted -------
+# /volume is a `nofail` mount, so nothing orders ordinary services after it.
+# Without this, a cold boot can start dockerd first: it mkdirs an EMPTY
+# data-root on the eMMC under the mountpoint, runs from there, and your
+# images/volumes look gone. RequiresMountsFor= adds Requires+After on the mount:
+# no disk -> docker doesn't start (loud), rather than running on the eMMC (silent).
+mkdir -p /etc/systemd/system/docker.service.d
+cat > /etc/systemd/system/docker.service.d/10-ckg2-data-root.conf <<EOF
+# ckg2_server — see 50-install-docker.sh
+[Unit]
+RequiresMountsFor=$DATA_ROOT
+EOF
+systemctl daemon-reload
+ok "docker.service now requires the mount under $DATA_ROOT."
+
+# --- 6. (re)start and confirm ------------------------------------------------
 systemctl enable docker.service >/dev/null 2>&1 || true
 systemctl start docker.service
 sleep 2
@@ -165,3 +204,11 @@ fi
 echo
 ok "Done. Put bind-mounted volumes under $DR_PARENT (e.g. -v $DR_PARENT/appdata/db:/var/lib/db)."
 log "Named volumes already live under $DATA_ROOT. See docs/10-storage-and-docker.md."
+echo
+warn "Smoke-test BEFORE building on this — Docker on the 3.18 kernel is unproven:"
+echo  "    docker run --rm hello-world"
+echo  "    docker run -d --name smoke -p 8080:80 nginx:alpine && sleep 15 && curl -sI http://localhost:8080; docker rm -f smoke"
+if ! docker compose version >/dev/null 2>&1; then
+  warn "No 'docker compose' (v2) — Debian's docker.io doesn't ship it. To use"
+  warn "examples/compose.example.yml, install the plugin (see docs/10-storage-and-docker.md)."
+fi

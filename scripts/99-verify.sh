@@ -27,6 +27,14 @@ check "sshd accepting connections" ssh_alive
 check "no UniFi 'unifi' service active"        bash -c '! systemctl is-active --quiet unifi.service'
 check "no UniFi supervisor (uhwd) active"      bash -c '! systemctl is-active --quiet uhwd.service'
 check "no infctld active"                      bash -c '! systemctl is-active --quiet infctld.service'
+# Leftovers that crash-loop after de-UniFi (e.g. an nginx that only fronted
+# unifi-core) show up here. Informational: judge each one, then disable it.
+failed="$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | xargs)"
+if [[ -n "$failed" ]]; then
+  warn "failed units: $failed   (inspect: systemctl status <unit>; clear: systemctl reset-failed)"
+else
+  ok "no failed systemd units"
+fi
 # One (and only one) front-panel daemon should be running.
 if systemctl is-active --quiet cloudkey.service 2>/dev/null; then
   ok "front-panel daemon active: cloudkey (jnovack)"; pass=$((pass+1))
@@ -55,7 +63,9 @@ log "eMMC: $(lsblk -dno NAME,SIZE /dev/mmcblk0 2>/dev/null)"
 # Rehomed dirs (35-rehome-storage.sh) — anything still on the eMMC keeps wearing it.
 for d in /home /srv /var/log; do
   src="$(findmnt -rno SOURCE "$d" 2>/dev/null || true)"
-  if [[ -n "$src" && "$src" != /dev/mmcblk* ]]; then
+  if [[ -L "$d" ]]; then
+    log "$d is a symlink -> $(readlink "$d")"
+  elif [[ -n "$src" ]] && ! on_os_storage "$d"; then
     ok "$d rehomed (from $src)"
   else
     log "$d on root/eMMC (not rehomed)"
@@ -68,10 +78,15 @@ if command -v docker >/dev/null 2>&1; then
     root="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null)"
     drv="$(docker info -f '{{.Driver}}' 2>/dev/null)"
     rootsrc="$(findmnt -rno SOURCE -T "$root" 2>/dev/null || true)"
-    if [[ -n "$rootsrc" && "$rootsrc" != /dev/mmcblk* ]]; then
+    if [[ -n "$root" ]] && ! on_os_storage "$root"; then
       ok "docker data-root $root on $rootsrc (off the eMMC), driver=$drv"; pass=$((pass+1))
     else
       warn "docker data-root $root is on the eMMC ($rootsrc) — see 50-install-docker.sh / docs/10"
+    fi
+    if systemctl show -p RequiresMountsFor docker.service 2>/dev/null | grep -q "$root"; then
+      ok "docker.service waits for the disk (RequiresMountsFor=$root)"
+    else
+      warn "docker.service doesn't require the disk mount — re-run 50-install-docker.sh"
     fi
   else
     warn "docker installed but daemon not responding (journalctl -u docker)"
@@ -92,6 +107,15 @@ else
   err "no default route found"
 fi
 
+if timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -qx yes; then
+  ok "clock synchronised (NTP)"
+else
+  warn "clock NOT NTP-synchronised yet (timedatectl status) — TLS/apt break if it drifts far"
+fi
+if command -v ufw >/dev/null 2>&1; then
+  log "firewall: $(ufw status 2>/dev/null | head -1)"
+fi
+
 echo; echo "== panel =="
 # Report the framebuffer and the LCD daemon independently (they're separate
 # concerns — the panel isn't taken over until the LCD step).
@@ -108,15 +132,19 @@ else
 fi
 
 echo; echo "== thermals (fanless — keep an eye on this) =="
-# Many Qualcomm thermal zones are unpopulated and read 0°C — skip those.
+# Units are MIXED on this kernel: Qualcomm's 3.18-era tsens zones report whole
+# degrees C (e.g. 42) while PMIC/battery zones report millidegrees (e.g. 42000).
+# Dividing everything by 1000 turns every tsens reading into "0°C". Treat
+# values >= 1000 as millidegrees, smaller ones as degrees; hide only true 0s.
 skipped=0
-for z in /sys/class/thermal/thermal_zone*/temp; do
-  [[ -r "$z" ]] || continue
-  t=$(cat "$z" 2>/dev/null); c=$((t/1000))
-  if (( c == 0 )); then skipped=$((skipped+1)); continue; fi
-  printf '   %s: %s°C\n' "$(dirname "$z" | xargs basename)" "$c"
+for z in /sys/class/thermal/thermal_zone*; do
+  [[ -r "$z/temp" ]] || continue
+  t="$(cat "$z/temp" 2>/dev/null)"; [[ "$t" =~ ^-?[0-9]+$ ]] || continue
+  if (( t == 0 )); then skipped=$((skipped+1)); continue; fi
+  (( t >= 1000 || t <= -1000 )) && c=$((t/1000)) || c=$t
+  printf '   %-15s %-22s %s°C\n' "$(basename "$z")" "$(cat "$z/type" 2>/dev/null)" "$c"
 done
-(( skipped > 0 )) && printf '   (%d unpopulated 0°C zones hidden)\n' "$skipped"
+(( skipped > 0 )) && printf '   (%d zones reading 0 hidden)\n' "$skipped"
 
 echo
 if [[ "$fail" -eq 0 ]]; then ok "All $pass checks passed."; else err "$fail check(s) failed, $pass passed."; fi
