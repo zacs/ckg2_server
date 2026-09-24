@@ -79,16 +79,29 @@ sudo ./10-deunifi.sh --apply && sudo reboot
 sudo ./99-verify.sh
 ```
 
-## Optional: a proper non-root sudo user
+## A proper non-root sudo user (recommended)
 
-Running everything as root is fine for a homelab box, but if you'd rather:
+The install runs as root, but day-to-day you'll want a normal user with sudo.
+Do this **after** `35-rehome-storage.sh`, so the new home directory lands on
+the SATA disk:
 
 ```bash
-adduser zac                       # sets a password interactively
-usermod -aG sudo zac              # grant sudo (install `sudo` first if needed: apt install sudo)
-sudo ./05-add-ssh-key.sh --user zac "ssh-ed25519 AAAA... you@host"
-# test:  ssh zac@<ip>   then   sudo -v
+command -v sudo || apt-get install -y sudo       # not guaranteed on the firmware image
+adduser <user>                                   # its password is what sudo asks for
+usermod -aG sudo <user>
+install -d -m 700 -o <user> -g <user> /home/<user>/.ssh
+install -m 600 -o <user> -g <user> /root/.ssh/authorized_keys /home/<user>/.ssh/
+#   (or give it a different key: ./05-add-ssh-key.sh --user <user> "ssh-ed25519 AAAA... you@host")
 ```
+
+Test from your workstation in a **new** terminal, keeping the root session open:
+
+```bash
+ssh <user>@<cloudkey-ip> 'sudo -v && echo sudo OK'
+```
+
+If that login is refused, check whether the stock config limits who may log
+in — `sshd -T | grep -iE 'allowusers|allowgroups'` — and add your user there.
 
 ## Optional: lock it down (only after key login is proven)
 
@@ -100,6 +113,7 @@ sudo tee /etc/ssh/sshd_config.d/10-ckg2.conf >/dev/null <<'EOF'
 PasswordAuthentication no
 ChallengeResponseAuthentication no
 KbdInteractiveAuthentication no
+# root may still log in with a key (a fallback); use "no" once your sudo user works
 PermitRootLogin prohibit-password
 X11Forwarding no
 ClientAliveInterval 120

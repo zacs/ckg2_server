@@ -72,9 +72,29 @@ sudo ./30-mount-storage.sh /dev/sda                      # 7. WIPE + mount the 2
                                                          #    (UniFi's old partitions — check for Protect footage first)
 sudo ./41-install-cloudkey.sh                            # 8. rich OLED daemon (LEDs, button, web dashboard)
 
-sudo ./35-rehome-storage.sh                              # 9. (optional) /home + /srv + /var/log onto the SATA disk
+sudo ./35-rehome-storage.sh                              # 9. (optional) /home + /var/log (+ /srv if present) onto the SATA disk
+sudo reboot                                              #    activates the /var/log move
 sudo ./99-verify.sh                                      # 10. final health check
 ```
+
+### Then: your own admin user (recommended)
+
+Up to here you're `root`. Once `/home` is on the SATA disk (step 9), make a
+normal user with sudo and your SSH key, so day-to-day work doesn't happen as
+root:
+
+```bash
+command -v sudo || apt-get install -y sudo       # not guaranteed on the firmware image
+adduser <user>                                   # its password is what sudo asks for
+usermod -aG sudo <user>
+install -d -m 700 -o <user> -g <user> /home/<user>/.ssh
+install -m 600 -o <user> -g <user> /root/.ssh/authorized_keys /home/<user>/.ssh/
+```
+
+Test from your workstation in a **new** terminal, keeping the root session open:
+`ssh <user>@<cloudkey> 'sudo -v && echo sudo OK'`. Once that works you can lock
+SSH down to keys only and turn off root login — see
+[docs/06-accounts-and-access.md](docs/06-accounts-and-access.md#optional-lock-it-down-only-after-key-login-is-proven).
 
 That's it — a Debian box with `/volume` for bulk data, unattended upgrades, and
 the front panel showing hostname / IP / uptime. `apt install` whatever you want

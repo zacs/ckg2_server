@@ -107,10 +107,14 @@ sudo ./41-install-cloudkey.sh                  # featured: jnovack daemon (LEDs,
 # sudo ./40-install-lcd.sh                      # this repo's minimal cklcd
 
 # 9. (optional) Keep writes off the soldered eMMC — see docs/07-storage.md:
-sudo ./35-rehome-storage.sh                    # move /home + /srv + /var/log onto /volume
+sudo ./35-rehome-storage.sh                    # move /home + /var/log (+ /srv if present) onto /volume
+sudo reboot                                    # activates the /var/log move
 
 # 10. Final health check:
 sudo ./99-verify.sh
+
+# 11. (recommended) Your own admin user with sudo + your SSH key, now that /home
+#     is on the SATA disk — see docs/06-accounts-and-access.md.
 ```
 
 You now have a plain Debian box with `/volume` for bulk data, a status screen,
