@@ -71,11 +71,12 @@ from here. Like a stock Ubuntu install, there's no firewall switched on, so an
 app you install is reachable on your LAN without extra rules (opt in with
 `20-provision.sh --firewall` if you want one).
 
-> **Heads-up — Debian 11 is end-of-life.** Current UniFi OS is Debian 11
-> *bullseye*, whose LTS ended on **2026-08-31**: unattended-upgrades is set up,
-> but no more security fixes will arrive. A release upgrade is constrained by the
-> old 3.18 vendor kernel (Debian 13's systemd won't boot on it). Keep this box
-> LAN-only, and read "Modernizing the userland" in
+> **Heads-up — check your Debian release first** (`cat /etc/os-release`). Cloud
+> Key firmware up to 5.x is Debian 11 *bullseye*, whose LTS ended on
+> **2026-08-31**: no more security fixes. Ubiquiti's newer 6.x firmware reportedly
+> moves the same hardware to Debian 13 *trixie* — so the supported way off
+> bullseye is to update the stock firmware **before** de-UniFi, not to
+> dist-upgrade by hand. Either way, keep this box LAN-only. Details:
 > [docs/02-install.md](docs/02-install.md#modernizing-the-userland-optional).
 
 **Where does everything live?** The OS stays on the **eMMC** (`/dev/mmcblk0`) —

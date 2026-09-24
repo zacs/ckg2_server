@@ -136,27 +136,41 @@ should go and how to make it wait for the disk at boot.
 
 ## Modernizing the userland (optional)
 
-**Where things stand (September 2026):** current UniFi OS is Debian 11
-*bullseye*, and bullseye's LTS ended on **2026-08-31**. `20-provision.sh` still
-sets up unattended-upgrades, but Debian publishes no more bullseye security
-fixes (Freexian sells "ELTS" beyond that, outside Debian). So at minimum:
-same-release patching (`apt-get update && apt-get full-upgrade`) gets you the
-*last* fixes, and the box should stay LAN-only with few exposed services.
+**Where things stand (September 2026):** Cloud Key firmware up to 5.x is Debian
+11 *bullseye*, and bullseye's LTS ended on **2026-08-31** — Debian publishes no
+more bullseye security fixes (Freexian sells "ELTS" beyond that, outside
+Debian). `20-provision.sh` still sets up unattended-upgrades, which is only
+useful on a supported release. Check what you have: `cat /etc/os-release`.
 
-A release upgrade is **not** the easy fix it is on a PC, because the userland has
-to keep running on the vendor **3.18** kernel:
+**The easy route: let Ubiquiti do the upgrade.** Ubiquiti's own **6.x** firmware
+for the Cloud Key reportedly runs a Debian 13 *trixie* base on this same 3.18
+kernel ([hutchx86/cloudkey-unas](https://github.com/hutchx86/cloudkey-unas)
+documents a stock Gen2 Plus on firmware 6.0.7–6.0.9 with a trixie base — one
+source, not confirmed against Ubiquiti's release notes). If that holds, the way
+off bullseye is:
+
+1. Update the stock firmware while UniFi OS is still installed (from the UniFi
+   OS console's update settings), or — if you've already de-UniFi'd — reinstall current stock
+   firmware from Recovery Mode ([04-recovery.md](04-recovery.md)); that wipes
+   your changes, so back up anything you've added first.
+2. Confirm `cat /etc/os-release` says trixie.
+3. Run the de-UniFi steps above on top. The package lists were built on 5.x, so
+   read the dry run carefully — the simulation gate aborts on any surprise, but
+   6.x may add packages the list doesn't know about yet.
+
+**The hard route: dist-upgrade by hand.** Not the easy fix it is on a PC,
+because the userland has to keep running on the vendor **3.18** kernel with
+*your* existing boot image:
 
 | Target | systemd | On the 3.18 kernel |
 |---|---|---|
 | Debian 12 *bookworm* (in LTS since 2026-07, until 2028-06) | 252 | systemd ≥ 251 declares kernels older than **4.15** unsupported. It may still boot, but nobody has shown it on this box. **Untested** — if it fails to boot, the way back is Recovery Mode + restoring your backup ([04](04-recovery.md)). |
-| Debian 13 *trixie* (current stable) | 257 | systemd ≥ 256 **refuses to boot on cgroup-v1-only kernels** unless `SYSTEMD_CGROUP_ENABLE_LEGACY_FORCE=1` is on the kernel command line — which here lives inside the Android-style `boot.img`. 3.18 has no cgroup v2. **Don't.** |
+| Debian 13 *trixie* (current stable) | 257 | systemd ≥ 256 **refuses to boot on cgroup-v1-only kernels** unless `SYSTEMD_CGROUP_ENABLE_LEGACY_FORCE=1` is on the kernel command line (here, inside the Android-style `boot.img`); 3.18 has no cgroup v2. Ubiquiti's 6.x firmware evidently handles this in its own boot image/packages — a hand upgrade on the 5.x boot image has no such fix. **Use the firmware route instead.** |
 
 Also expect: the kept Ubiquiti initramfs/udev/base-files packages were built for
 bullseye, and apt prompts where you must **keep your `sshd_config`** or lose SSH.
 Some `/etc` files get reset on boot by the base-files hooks — keep persistent
 config in systemd units under `/etc/systemd/system`.
 
-The only real way to a supported Debian would be a newer kernel, and nobody has
-a working one for this board yet. Until then, a de-UniFi'd bullseye is a fine
-**LAN-only** appliance — just don't treat it as a patched, internet-facing
-server.
+If you stay on bullseye, a de-UniFi'd box is still a fine **LAN-only**
+appliance — just don't treat it as a patched, internet-facing server.
