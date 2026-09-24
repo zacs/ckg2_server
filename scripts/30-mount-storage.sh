@@ -126,6 +126,13 @@ fi
 
 log "Making ext4 filesystem on $TARGET…"
 mkfs.ext4 -F -L volume "$TARGET"
+# USB-SATA bridges often report a bogus "optimal I/O size", which mkfs takes
+# as a RAID stripe hint (seen: stripe=8191 with a Crucial MX500 in a Gen2 Plus).
+# On a single disk it only skews the block allocator, so clear it.
+if dumpe2fs -h "$TARGET" 2>/dev/null | grep -qiE '^RAID (stride|stripe width):'; then
+  log "Clearing the RAID stripe hint the USB bridge reported (meaningless on one disk)…"
+  tune2fs -E stride=0,stripe_width=0 "$TARGET" >/dev/null
+fi
 UUID="$(blkid -s UUID -o value "$TARGET")"
 [[ -n "$UUID" ]] || die "could not read UUID of new filesystem."
 
@@ -156,6 +163,15 @@ systemctl enable --now "$UNIT"
 
 ok "Mounted:"
 findmnt "$MOUNTPOINT"
+
+# SSDs want periodic TRIM. Only if the USB bridge passes discard through
+# (discard_max_bytes > 0); otherwise fstrim would just fail every week.
+DISK="$(basename "$DEVICE")"
+if [[ "$(cat "/sys/block/$DISK/queue/discard_max_bytes" 2>/dev/null || echo 0)" != 0 ]] && \
+   systemctl cat fstrim.timer >/dev/null 2>&1; then
+  systemctl enable --now fstrim.timer >/dev/null 2>&1 && \
+    log "TRIM supported through the USB bridge — enabled the weekly fstrim.timer."
+fi
 log "Health tip: this disk is USB-attached; check SMART with:  smartctl -a $DEVICE"
 log "  (some USB-SATA bridges don't pass SMART through; try: smartctl -d sat -a $DEVICE)"
 if [[ "$MOUNTPOINT" == "/volume" ]]; then
