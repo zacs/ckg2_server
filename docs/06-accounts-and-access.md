@@ -105,22 +105,29 @@ in — `sshd -T | grep -iE 'allowusers|allowgroups'` — and add your user there
 
 ## Optional: lock it down (only after key login is proven)
 
-Once you've logged in with your key on a fresh connection and confirmed it works:
+Once your sudo user logs in with its key on a fresh connection (README step 11),
+and you've taken any backup that needs root over SSH (README step 12):
 
 ```bash
-# edit the drop-in this repo installed
-sudo tee /etc/ssh/sshd_config.d/10-ckg2.conf >/dev/null <<'EOF'
+sudo tee /etc/ssh/sshd_config.d/00-lockdown.conf >/dev/null <<'EOF'
 PasswordAuthentication no
-ChallengeResponseAuthentication no
 KbdInteractiveAuthentication no
-# root may still log in with a key (a fallback); use "no" once your sudo user works
-PermitRootLogin prohibit-password
-X11Forwarding no
-ClientAliveInterval 120
-ClientAliveCountMax 3
+ChallengeResponseAuthentication no
+PermitRootLogin no
 EOF
 sudo sshd -t && sudo systemctl reload ssh    # validate BEFORE it takes effect
 ```
+
+Why a separate file: `20-provision.sh` rewrites its own drop-in, `10-ckg2.conf`,
+every time it runs, so settings added there would be silently undone by a
+re-run. Provisioning never touches `00-lockdown.conf`. The `00-` prefix also
+matters: sshd keeps the **first** value it reads for each option, and drop-ins
+are read in name order, so this file wins over `10-ckg2.conf` and over anything
+later in the main config.
+
+Prefer to keep root reachable with a key as a fallback? Use
+`PermitRootLogin prohibit-password` instead of `no`. To undo the lockdown
+entirely, delete the file and reload sshd.
 
 Why both `ChallengeResponseAuthentication` *and* `KbdInteractiveAuthentication`:
 firmware 5.x (bullseye) ships **OpenSSH 8.4**, which honours only the old name;
@@ -134,7 +141,21 @@ sudo sshd -T | grep -iE 'passwordauthentication|challengeresponse|kbdinteractive
 ```
 
 If `sshd -t` complains, fix it before reloading. Do **not** reboot or restart
-sshd on a config that fails the test.
+sshd on a config that fails the test. If `sshd -T` still shows `yes` for
+something you set to `no`, the main config sets it before its `Include` line:
+`grep -niE 'include|permitrootlogin|passwordauth|kbdinteractive|challengeresp' /etc/ssh/sshd_config`
+shows the order.
+
+**Backups after the lockdown:** the workstation one-liner
+(`ssh root@… 'gzip -1 < /dev/mmcblk0'`) needs root over SSH, which is now off.
+Image to the drive instead and copy it off as your user:
+
+```bash
+sudo mkdir -p /volume/backups
+sudo ./scripts/00-preflight-backup.sh /volume/backups/emmc.img.gz
+# then, on your workstation:
+scp <user>@<cloudkey>:/volume/backups/emmc.img.gz .
+```
 
 ## Does the fstab-rewriting hook touch credentials?
 

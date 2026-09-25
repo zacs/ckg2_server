@@ -78,20 +78,18 @@ EOF
 # Deliberately conservative. Your access model on a stock CloudKey is "root with
 # a password", so we do NOT touch PermitRootLogin or PasswordAuthentication here
 # — flipping either before you have a *tested* SSH key is exactly how people lock
-# themselves out. The drop-in below only carries harmless settings. Lock down
-# password/root login yourself, after verifying key login — see
-# docs/06-accounts-and-access.md.
+# themselves out. The drop-in below only carries harmless settings, and it is
+# REWRITTEN on every run — so the lockdown goes in its own file,
+# 00-lockdown.conf, which this script never touches (README step 13,
+# docs/06-accounts-and-access.md).
 if [[ -f /etc/ssh/sshd_config ]]; then
   log "Applying safe SSH defaults (no auth changes)…"
   mkdir -p /etc/ssh/sshd_config.d
   cat > /etc/ssh/sshd_config.d/10-ckg2.conf <<'EOF'
 # ckg2_server SSH drop-in — intentionally contains NO auth-restricting settings.
-# To harden AFTER you've installed and TESTED an SSH key (see
-# docs/06-accounts-and-access.md), add here and reload sshd:
-#     PasswordAuthentication no
-#     ChallengeResponseAuthentication no   # OpenSSH 8.4 (bullseye) name...
-#     KbdInteractiveAuthentication no      # ...and the >= 8.7 name; set both
-#     PermitRootLogin prohibit-password
+# 20-provision.sh overwrites this file on every run: don't edit it. To disable
+# password/root login, use 00-lockdown.conf instead (README step 13,
+# docs/06-accounts-and-access.md).
 X11Forwarding no
 ClientAliveInterval 120
 ClientAliveCountMax 3
@@ -147,7 +145,7 @@ fi
 
 # --- 5. timekeeping ---------------------------------------------------------
 # The RTC is backed by the PMIC + the internal battery pack (which can swell —
-# see the README safety note). Lean on NTP so a dead battery doesn't matter.
+# see "Good to know" in the README). Lean on NTP so a dead battery doesn't matter.
 # Since Debian 11, systemd-timesyncd is its OWN package, so `timedatectl set-ntp`
 # fails ("NTP not supported") if nothing provides it. Use an existing NTP
 # daemon if there is one; otherwise install timesyncd (it Conflicts with the

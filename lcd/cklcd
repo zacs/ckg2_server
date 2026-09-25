@@ -25,7 +25,7 @@
 # No root needed beyond read/write access to /dev/fb0 (the service runs as root).
 #
 # This is intentionally a single dependency-light file so you can scp it onto a
-# stock CloudKey and run it. See README.md#lcd for the design notes.
+# stock CloudKey and run it. See docs/03-lcd.md for the design notes.
 
 import argparse
 import fcntl
