@@ -230,12 +230,36 @@ prep_postgres_manpages() {
   done
 }
 
+# postgres_present — true while any PostgreSQL package is still on the box.
+postgres_present() {
+  dpkg-query -W -f='${db:Status-Status}\n' 'postgresql*' 2>/dev/null | grep -qvx 'not-installed'
+}
+
 # cleanup_postgres_placeholders — once no PostgreSQL package is left at all,
 # /usr/share/postgresql holds nothing but our placeholders.
 cleanup_postgres_placeholders() {
   [[ -d /usr/share/postgresql ]] || return 0
-  dpkg-query -W -f='${db:Status-Status}\n' 'postgresql*' 2>/dev/null | grep -qvx 'not-installed' && return 0
+  postgres_present && return 0
   rm -rf /usr/share/postgresql
+}
+
+# cleanup_leftover_data — the purges leave UniFi's data and a little config
+# behind (seen on 6.0.10: ~76 MB of PostgreSQL data in /data, plus UniFi OS
+# state and console backups). Lists it with sizes and deletes only on a yes.
+# /data is its own eMMC filesystem: never touch /data itself or lost+found.
+cleanup_leftover_data() {
+  local d dirs=(/data/unifi /data/uos /data/autobackup /etc/ustd) existing=()
+  postgres_present || dirs+=(/data/postgresql /etc/postgresql /var/lib/postgresql)
+  for d in "${dirs[@]}"; do [[ -e "$d" ]] && existing+=("$d"); done
+  (( ${#existing[@]} )) || return 0
+  echo
+  log "Leftover UniFi data (its packages are gone):"
+  du -sh "${existing[@]}" 2>/dev/null | sed 's/^/    /'
+  if confirm "Delete it? (/data/autobackup holds UniFi console backups)"; then
+    rm -rf "${existing[@]}" && ok "leftover UniFi data removed."
+  else
+    log "kept. Delete later with: rm -rf ${existing[*]}"
+  fi
 }
 
 # purge_leftover_configs PKG... — a package with only config files left
@@ -307,7 +331,7 @@ main() {
   log "Model detected: $(ck_model)"
   simulate_gate; local rc=$?
   [[ $rc -eq 1 ]] && exit 1
-  [[ $rc -eq 2 ]] && { disable_units; exit 0; }
+  [[ $rc -eq 2 ]] && { disable_units; [[ "$APPLY" == "1" ]] && cleanup_leftover_data; exit 0; }
 
   echo
   if [[ "$APPLY" != "1" ]]; then
@@ -355,6 +379,8 @@ main() {
   else
     DEBIAN_FRONTEND=noninteractive apt-get -y --purge autoremove || true
   fi
+
+  cleanup_leftover_data
 
   echo
   ok "UniFi application layer removed and supervisor/watchdog units disabled."
