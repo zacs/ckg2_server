@@ -7,10 +7,10 @@
 #   * Removes the UniFi Network + Protect apps, MongoDB, the UniFi-OS agents,
 #     and the process supervisor / auto-update daemons that cause the
 #     "reboots itself when UniFi isn't running" behaviour.
-#   * NEVER touches the load-bearing packages whose removal bricks the device:
-#     ck-ui, ubnt-tools, the per-model *-base-files package, and the initramfs
-#     package. Removing those cascades into an unbootable box (documented
-#     failure mode). A dry-run simulation gates every real removal and aborts on
+#   * NEVER touches the load-bearing packages whose removal bricks the device
+#     or cuts off access: ck-ui, ubnt-tools, the per-model *-base-files package,
+#     the initramfs and kernel packages, and a few more (FORBIDDEN_RE below).
+#     Removing those cascades into an unbootable box (documented failure mode). A dry-run simulation gates every real removal and aborts on
 #     ANY unexpected cascade into a forbidden package.
 #   * Purges in small batches with a real SSH liveness check between each, so a
 #     surprise breakage stops immediately instead of taking the whole system
@@ -55,7 +55,7 @@ assert_cloudkey
 # Prerequisite: current stock firmware. 6.x is Debian 13; 5.x and older are
 # Debian 11 (bullseye), which lost security support on 2026-08-31. Update the
 # firmware BEFORE de-UniFi — on this 3.18 kernel that's the supported way off
-# bullseye (docs/02-install.md, "Modernizing the userland").
+# bullseye (docs/02-install.md, "Why not dist-upgrade by hand?").
 . /etc/os-release 2>/dev/null || true
 if [[ "${VERSION_CODENAME:-}" == "bullseye" ]]; then
   warn "This box runs Debian 11 (bullseye) = Cloud Key firmware 5.x or older, which gets"

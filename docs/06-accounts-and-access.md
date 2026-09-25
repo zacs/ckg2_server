@@ -58,25 +58,23 @@ This repo is built to avoid that:
 
 ## The safe order (do this)
 
+These are README steps 3, 5 and 6, run from the repo folder as root:
+
 ```bash
-cd ckg2_server/scripts
+# Step 3: a KNOWN root password (don't rely on a half-remembered one)...
+passwd root
+#   ...plus your SSH key. The .pub file is on your WORKSTATION, so run this there:
+#       ssh-copy-id root@<cloudkey>
+#   or paste the key text on the box:
+#       ./scripts/05-add-ssh-key.sh "ssh-ed25519 AAAA... you@host"
+#   Then open a NEW terminal: `ssh root@<cloudkey>` should not ask for a password.
+#   Keep your current session open until that works.
 
-# 1. Establish a KNOWN root password (don't rely on a vaguely-remembered one):
-sudo passwd root
+# Step 5: NOW it's safe to remove UniFi (you have password + key, both tested):
+./scripts/10-deunifi.sh --apply && reboot
 
-# 2. Install your SSH public key and TEST it from a second terminal.
-#    The .pub file is on your WORKSTATION, so either run this there:
-#        ssh-copy-id root@<cloudkey-ip>
-#    or paste the key text on the box:
-sudo ./05-add-ssh-key.sh "ssh-ed25519 AAAA... you@host"
-#    → open a NEW terminal:  ssh root@<cloudkey-ip>   (should not ask for a password)
-#    Keep your current session open until that works.
-
-# 3. NOW it's safe to de-UniFi (you have password + key, both tested):
-sudo ./10-deunifi.sh --apply && sudo reboot
-
-# 4. After reboot, confirm you can still get in (password AND key), then verify:
-sudo ./99-verify.sh
+# Step 6: after the reboot, confirm you can still get in (password AND key):
+./scripts/99-verify.sh
 ```
 
 ## A proper non-root sudo user (recommended)
@@ -91,7 +89,7 @@ adduser <user>                                   # its password is what sudo ask
 usermod -aG sudo <user>
 install -d -m 700 -o <user> -g <user> /home/<user>/.ssh
 install -m 600 -o <user> -g <user> /root/.ssh/authorized_keys /home/<user>/.ssh/
-#   (or give it a different key: ./05-add-ssh-key.sh --user <user> "ssh-ed25519 AAAA... you@host")
+#   (or give it a different key: ./scripts/05-add-ssh-key.sh --user <user> "ssh-ed25519 AAAA... you@host")
 ```
 
 Test from your workstation in a **new** terminal, keeping the root session open:
@@ -163,5 +161,5 @@ No. The base-files boot hooks that reset `/etc/fstab`
 ([05-watchdog-and-persistence.md](05-watchdog-and-persistence.md)) template a
 handful of config files — not `/etc/shadow`, `/etc/passwd`, or
 `/root/.ssh/authorized_keys`. Your password and keys persist across reboots. As
-always: prove it by actually rebooting and logging in again, which step 4 above
-does.
+always: prove it by actually rebooting and logging in again, which the reboot
+after removing UniFi does.

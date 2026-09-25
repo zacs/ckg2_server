@@ -3,9 +3,9 @@
 # base tooling, sane SSH, automatic updates, time sync, and the housekeeping
 # that keeps UniFi's leftovers from getting in the way.
 #
-# Firewall: like a stock Debian/Ubuntu install, ufw is installed but left OFF,
-# so anything you install is reachable on the LAN with no per-app rules. Pass
-# --firewall to turn on ufw (deny incoming, allow SSH) instead; then every app
+# Firewall: like a stock Debian/Ubuntu install, none is turned on, so anything
+# you install is reachable on the LAN with no per-app rules. Pass --firewall to
+# install and turn on ufw (deny incoming, allow SSH) instead; then every app
 # needs a `ufw allow <port>`.
 #
 # Idempotent: safe to run more than once. Everything it writes lives in places
@@ -44,7 +44,7 @@ log "(Current firmware: aarch64 kernel + arm64 userland. Very old firmware shipp
 if [[ "${VERSION_CODENAME:-}" == "bullseye" ]]; then
   warn "This is Debian 11 (bullseye), which reached end-of-life on 2026-08-31 — no further"
   warn "security updates will arrive. Update the stock firmware to 6.x (Debian 13) first:"
-  warn "see 'Modernizing the userland' in docs/02-install.md."
+  warn "see step 1 in the README (details: docs/02-install.md)."
 fi
 
 # --- 1. base packages --------------------------------------------------------
@@ -116,8 +116,9 @@ EOF
 fi
 
 # --- 4. firewall (opt-in) ---------------------------------------------------
-# Default: leave it alone. ufw is installed but inactive, exactly like a stock
-# Ubuntu install, so a newly installed app is reachable with no extra steps.
+# Default: leave it alone. No firewall is active, exactly like a stock Ubuntu
+# install (and ufw is only installed with --firewall), so a newly installed app
+# is reachable with no extra steps.
 # Without --firewall this script never enables OR disables ufw, so a choice
 # you made by hand survives re-runs.
 if [[ "$FIREWALL" == "1" ]]; then

@@ -184,12 +184,12 @@ state that must survive a dead disk stays on the eMMC.
 
 ## Recommended order
 
-Slotting into the flow from [02-install.md](02-install.md):
+README steps 7 and 8 ([details](02-install.md#7-format-and-mount-the-25-drive)):
 
 ```bash
-sudo ./30-mount-storage.sh /dev/sda     # /volume exists first — everything else needs it
-sudo ./35-rehome-storage.sh             # /home + /srv + /var/log onto /volume
-sudo reboot                             # activates the /var/log bind (deferred by design)
+./scripts/30-mount-storage.sh /dev/sda   # /volume exists first — everything else needs it
+./scripts/35-rehome-storage.sh           # /home + /var/log (+ /srv if present) onto /volume
+reboot                                   # activates the /var/log bind (deferred by design)
 ```
 
 `99-verify.sh` reports the active rehome bind-mounts, so you can confirm nothing

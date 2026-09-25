@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 40-install-lcd.sh — install the `cklcd` front-panel tool and its status
-# daemon, and hand the OLED over from the stock `ck-ui`.
+# daemon, and hand the OLED over from the stock `ck-ui` (or from the jnovack
+# daemon, if 41-install-cloudkey.sh installed it).
 #
 # The front panel is a Linux framebuffer (/dev/fb0). The stock `ck-ui` daemon
 # owns it and will redraw over anything else, so we stop+disable it first, then

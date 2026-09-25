@@ -19,7 +19,7 @@ always get back.
 **If SSH still works, you don't need Recovery Mode:** Ubiquiti's
 `ubnt-systool fwupdate <URL>` flashes a firmware `.bin` from the running system
 and reboots — including on a de-UniFi'd box (see
-[02-install.md](02-install.md#modernizing-the-userland-optional)). Recovery Mode
+[02-install.md](02-install.md#1-update-to-current-firmware)). Recovery Mode
 is the fallback when you can't get in, or when that fails.
 
 Recovery Mode runs from its own partition, which nothing in this repo touches,

@@ -1,208 +1,261 @@
-# 02 — Install: reclaim the stock Debian
+# 02 — Install details
 
-No disassembly, no serial adapter, no bootloader work, low brick risk — and it
-satisfies every goal: a persistent Linux server with the SATA disk, PoE, and the
-LCD all working.
+The [README](../README.md#install) has the commands. This page explains each
+step, using the same numbers: why it's there, the options, and what to watch
+for.
 
-## The key insight
+## The idea
 
-Stock UniFi OS on the CloudKey Gen2 **is already Debian** (Debian 9/10/11
-depending on firmware) with the UniFi apps layered on top and a process
-supervisor that reboots the box when those apps are unhealthy. "Installing Linux"
-here means **removing the UniFi layer and its supervisor** and keeping the Debian
-underneath — which you then modernize and use as a server.
+Stock UniFi OS on the CloudKey Gen2 **is already Debian**, with the UniFi apps
+on top and a supervisor that reboots the box when those apps are unhealthy.
+"Installing Linux" here means **removing the UniFi layer and its supervisor**
+and keeping the Debian underneath.
 
-What you keep: the stock aarch64 vendor kernel (`3.18.44-ui-qcom`) and the Debian
-userland (arm64; Debian 13 on firmware 6.x). What you remove:
-UniFi Network, Protect, MongoDB, the UniFi-OS
-agents, and the watchdog/auto-updater that cause the reboot behaviour.
+- **You keep:** Ubiquiti's kernel (`3.18.44-ui-qcom`, aarch64) and the Debian
+  userland (arm64, Debian 13 on firmware 6.x).
+- **You remove:** UniFi Network and Protect, MongoDB and PostgreSQL, the UniFi
+  OS agents, and the watchdog and auto-updater behind the reboots.
 
-> Trade-off, stated plainly: you stay on Ubiquiti's old 3.18 kernel. It is rock
-> solid and every peripheral works, but it's old — which caps how far the
-> userland can be modernized ([below](#modernizing-the-userland-optional)) and
-> rules out containers, so services run directly on the OS
-> ([07-storage.md](07-storage.md#running-your-own-services)).
-
-## Before you start
-
-- Get in over SSH. On stock UniFi OS, enable SSH in the UniFi OS settings (or the
-  device's local portal) and set a password. Then `ssh root@<ip>` (or your admin
-  user).
-- **Be on current stock firmware (6.x = Debian 13).** Check with
-  `cat /etc/os-release`; if it says *bullseye*, you're on 5.x or older, which no
-  longer gets security updates. Update first, over SSH:
-
-  ```bash
-  ubnt-systool fwupdate <URL of the newest .bin for your model>   # UCKP = Gen2 Plus, UCKG2 = Gen2
-  ```
-
-  Get the URL from ui.com → Downloads → Cloud Keys (copy the download link). It
-  downloads the image, stages it, and reboots by itself; SSH back in and confirm
-  `os-release` says *trixie*. More in
-  [Modernizing the userland](#modernizing-the-userland-optional).
-- **Read [05-watchdog-and-persistence.md](05-watchdog-and-persistence.md)** — it
-  explains the two reboot mechanisms and the `/etc/fstab`-gets-rewritten gotcha.
-- Copy this repo onto the box: `git clone` it, or `scp -r` the folder over.
+The trade-off: you stay on the old 3.18 kernel. Every peripheral works, but it
+rules out Docker and other containers, so services run directly on the OS
+([07-storage.md](07-storage.md#running-your-own-services)). It's also why you
+update Debian by updating the firmware
+([not by dist-upgrading](#why-not-dist-upgrade-by-hand)).
 
 ## Step by step
 
-Run everything **on the box, over an interactive SSH session** (not scripted from
-your laptop — the liveness checks need to run locally).
+### 1. Update to current firmware
 
-```bash
-cd ckg2_server/scripts
+`ubnt-systool fwupdate <URL>` downloads the firmware (about 860 MB) to
+`/var/tmp`, prints its version string (for example
+`UCKP.apq8053.v6.0.10.8e20374.260922.0941`), then reboots to flash it. Copy the
+URL from [ui.com/download](https://ui.com/download) → Cloud Keys: `UCKP` files
+are for the Gen2 Plus, `UCKG2` files for the plain Gen2.
 
-# 0. SAFETY NET FIRST. Image the eMMC so you can always get back. This box has
-#    NO usable USB port and the SATA disk isn't mounted yet, so back up over the
-#    network. Easiest: run this line FROM your workstation to pull the image:
-#        ssh root@<cloudkey> 'gzip -1 < /dev/mmcblk0' > cloudkey-emmc.img.gz
-#    Or push it from the box with the script's stdout mode:
-sudo ./00-preflight-backup.sh --stdout | gzip -1 | ssh you@nas 'cat > cloudkey-emmc.img.gz'
-#    Either way, check the result is a complete gzip stream before relying on it:
-#        gzip -t cloudkey-emmc.img.gz
-#    (If you've already mounted the SATA disk, you can instead write to a file
-#     there — but 30-mount-storage.sh erases that disk later, so copy it off.)
+What a firmware update does to the box (seen going from 5.x to 6.0.10):
 
-# 1. LOCK IN YOUR ACCESS before removing anything. You'll still be root with the
-#    same password afterwards (it's in /etc/shadow, not the UniFi DB), but don't
-#    bet your only way in on it. See docs/06-accounts-and-access.md.
-sudo passwd root                               # set a KNOWN root password
-#    Install your key FROM YOUR WORKSTATION (that's where the .pub file lives):
-#        ssh-copy-id root@<ip>
-#    or paste the key text here on the box:
-#        sudo ./05-add-ssh-key.sh "ssh-ed25519 AAAA... you@host"
-#    ...then TEST it from a SECOND terminal: `ssh root@<ip>` must work with no
-#    password prompt. Keep this session open until it does.
+- **Kept:** SSH access and everything in `/root`, including your SSH key.
+- **Reset:** the UniFi layer comes back, and packages you installed yourself
+  (such as `git`) are gone.
+- **Empty package lists:** run `apt-get update` before installing anything, or
+  apt says it can't find the package.
 
-# 2. See the de-UniFi plan WITHOUT changing anything (dry run):
-sudo ./10-deunifi.sh
+It works on a box that's already had UniFi removed, because `ubnt-systool`
+ships in a package de-UniFi keeps. Updating that way puts you back at step 2:
+take a fresh backup (the old one is the old system), then remove UniFi again.
 
-# 3. If the plan looks right (no forbidden packages flagged), apply it:
-sudo ./10-deunifi.sh --apply
-
-# 4. Reboot BY HAND and reconnect (confirm BOTH password and key still work):
-sudo reboot
-#    ... wait, then ssh back in ...
-
-# 5. Confirm it came back clean:
-cd ckg2_server/scripts
-sudo ./99-verify.sh
-
-# 6. Provision the server (tools, auto-updates, NTP). No firewall is switched on,
-#    same as a stock Ubuntu/Debian install: anything you install is reachable on
-#    your LAN without per-app rules. Add --firewall if you want ufw on
-#    (deny incoming + allow SSH; then each app needs `ufw allow <port>`).
-sudo ./20-provision.sh
-
-# 7. Format + persistently mount the internal 2.5" disk (shows up as /dev/sda).
-#    A stock drive carries UniFi's own partitions (swap + a data partition, often
-#    still mounted at /volume, possibly with old Protect footage) — look first:
-#        lsblk -f /dev/sda ; swapon --show
-#    The script shows what's in use and releases it only after you confirm.
-sudo ./30-mount-storage.sh /dev/sda            # → /volume
-
-# 8. (optional) Keep writes off the soldered eMMC — see docs/07-storage.md:
-sudo ./35-rehome-storage.sh                    # move /home + /var/log (+ /srv if present) onto /volume
-sudo reboot                                    # activates the /var/log move
-
-# 9. Take over the OLED. Pick ONE (only one process may own /dev/fb0):
-sudo ./41-install-cloudkey.sh                  # featured: jnovack daemon (LEDs, button, web UI)
-#   -- or the lightweight text-only tool instead --
-# sudo ./40-install-lcd.sh                      # this repo's minimal cklcd
-
-# 10. Final health check:
-sudo ./99-verify.sh
-
-# 11. (recommended) Your own admin user with sudo + your SSH key, now that /home
-#     is on the SATA disk — see docs/06-accounts-and-access.md.
-```
-
-You now have a plain Debian box with `/volume` for bulk data, a status screen,
-and no UniFi reboots. Install whatever you like with
-`apt install …` or an app's own Linux installer — see
-[07-storage.md](07-storage.md#running-your-own-services) for where its data
-should go and how to make it wait for the disk at boot.
-
-> **Where does the OS live? Where does my data go?** The OS stays on the **eMMC**
-> (`/dev/mmcblk0`, `/`) — nothing here reinstalls it. The SATA disk
-> (`/dev/sda` → `/volume`) is bulk storage and the place for anything
-> write-heavy: service data under `/volume/appdata/<app>`, and step 8 rehomes
-> `/home`, `/srv`, and `/var/log` too. Full explanation:
-> [07-storage.md](07-storage.md).
-
-> **Will I still be root with my old password?** Yes. The SSH/root password lives
-> in `/etc/shadow`, and the purge doesn't touch it; the account UniFi keeps in
-> MongoDB is the *web-GUI* admin, which you're discarding. Step 1 exists only so a
-> half-remembered password or a UniFi-managed credential can't strand you
-> mid-install. Full story: [06-accounts-and-access.md](06-accounts-and-access.md).
-
-## What each script does (and the safety built in)
-
-| Script | Purpose | Safety |
-|--------|---------|--------|
-| `00-preflight-backup.sh` | Full eMMC image to a file | Refuses to write onto the eMMC itself; records a sha256 |
-| `05-add-ssh-key.sh` | Install an SSH key for root (or a user) before surgery | Only *adds* a key; never disables password auth or restricts login → can't lock you out |
-| `10-deunifi.sh` | Purge UniFi apps + disable supervisor/watchdog | **Dry-run by default**; simulate-gate aborts on any cascade into `ck-ui`/`ubnt-tools`/`*-base-files`/initramfs/kernel; batched purge with SSH liveness check between batches |
-| `20-provision.sh` | Base tooling, unattended-upgrades, NTP, light SSH hardening; ufw only with `--firewall` | Idempotent; does **not** disable password auth (won't lock you out); never flips ufw on or off unless asked |
-| `30-mount-storage.sh` | ext4 + systemd `.mount` for `/dev/sda` | Refuses the eMMC; lists UniFi's old partitions/swap still in use and releases them only after you confirm; flags `/etc/fstab` lines that point at the disk; uses a `.mount` unit (survives the fstab rewrite) |
-| `35-rehome-storage.sh` | Bind-mount `/home`, `/srv`, `/var/log` onto `/volume/rehome/` | Copies (never deletes) originals; requires `/volume` on the SATA disk; skips symlinked or already-mounted targets; `nofail` bind units (survive a dead disk), not fstab, not symlinks |
-| `40-install-lcd.sh` | Install lightweight `cklcd` + service, disable stock `ck-ui` | Idempotent; probes `/dev/fb0` first |
-| `41-install-cloudkey.sh` | Install the richer `jnovack/cloudkey` daemon (LEDs, button, web UI) | Pinned release + sha256; verifies it's an ARM ELF; disables `ck-ui` **and** `cklcd` so only one owns `/dev/fb0` |
-| `99-verify.sh` | Read-only health check | Changes nothing |
-
-## Modernizing the userland (optional)
-
-**Where things stand (September 2026):** Cloud Key firmware up to 5.x is Debian
-11 *bullseye*, and bullseye's LTS ended on **2026-08-31** — Debian publishes no
-more bullseye security fixes (Freexian sells "ELTS" beyond that, outside
-Debian). `20-provision.sh` still sets up unattended-upgrades, which is only
-useful on a supported release. Check what you have: `cat /etc/os-release`.
-
-**The supported route: update the stock firmware.** Ubiquiti's **6.x** firmware
-for the Cloud Key runs a Debian 13 *trixie* base on this same 3.18 kernel —
-verified here on a Gen2 Plus (6.0.10 → Debian 13.7), and also seen by
-[hutchx86/cloudkey-unas](https://github.com/hutchx86/cloudkey-unas). Ubiquiti's
-own tool does it over SSH:
-
-```bash
-ubnt-systool fwupdate <URL>
-# e.g. Gen2 Plus, 6.0.10 (check ui.com for newer; UCKG2 files are for the plain Gen2):
-# https://fw-download.ubnt.com/data/unifi-cloudkey/9c12-UCKP-6.0.10-222899cf-67fc-434d-855b-1499dfb2b0fe.bin
-```
-
-It downloads the image to `/var/tmp`, reports the firmware string (e.g.
-`UCKP.apq8053.v6.0.10.8e20374.260922.0941`), stages it, and reboots to flash.
-It also works **after** `10-deunifi.sh` — `ubnt-systool` ships in a package
-de-UniFi keeps — and SSH access came through the update intact, so it can be
-done remotely (with the usual caveat that if a flash ever fails, Recovery Mode
-needs a hand on the reset button). Without SSH (or if it fails), use Recovery Mode instead
+If SSH doesn't work or the update fails, use Recovery Mode instead
 ([04-recovery.md](04-recovery.md#restore-or-upgrade-stock-unifi-firmware)).
 
-Afterwards:
+### 2. Back up the internal storage
 
-1. SSH back in and confirm `cat /etc/os-release` says *trixie*. A firmware
-   update is expected to put back stock UniFi OS, so check
-   `dpkg -l | grep -iE 'unifi|uos'` — if the UniFi layer is back, you're at the
-   start of this guide again.
-2. Take a **fresh** eMMC backup (step 0) — your old image is the bullseye system.
-3. Run the de-UniFi steps on top. The package lists were built on 5.x, so read
-   the dry run carefully — the simulation gate aborts on any cascade into a
-   protected package, but 6.x may add UniFi packages the list doesn't know
-   about yet.
+The one-liner in the README streams the whole eMMC (`/dev/mmcblk0`, about
+29 GiB) to your computer, compressed. `gzip -t` then confirms the file is
+complete and undamaged. Budget time for this: it's slow.
 
-**The hard route: dist-upgrade by hand.** Not the easy fix it is on a PC,
-because the userland has to keep running on the vendor **3.18** kernel with
-*your* existing boot image:
+- **Push from the box instead**, to a NAS for example, once the repo is on the
+  box:
+  `./scripts/00-preflight-backup.sh --stdout | gzip -1 | ssh you@nas 'cat > cloudkey-emmc.img.gz'`
+- **Not onto the 2.5" drive:** step 7 erases it.
+- **It's a live image**, like pulling the plug at that moment. That's fine for
+  a restore. For a perfectly quiet image, take it from Recovery Mode.
+
+Restoring: [04-recovery.md](04-recovery.md).
+
+### 3. Set up SSH key login
+
+After de-UniFi you're still `root` with the same password: it's stored in
+`/etc/shadow`, not in UniFi's database. Still, don't rely on a password you
+half remember. Set a known one with `passwd root`, and add a key so you have
+two ways in before anything is removed.
+
+No `ssh-copy-id` on your computer? Once the repo is on the box (step 4), paste
+your public key with `./scripts/05-add-ssh-key.sh "ssh-ed25519 AAAA… you@host"`.
+Either way, test the key from a second terminal before going on. Full story:
+[06-accounts-and-access.md](06-accounts-and-access.md).
+
+### 4. Get this repo onto the CloudKey
+
+The firmware image doesn't include `git`, and a freshly flashed box has empty
+package lists, hence the `apt-get update` first. You can also `scp -r` the
+folder over from your computer.
+
+### 5. Remove UniFi
+
+Run `10-deunifi.sh` **on the box, in an interactive SSH session**, not from a
+script on your computer. It checks that SSH still works between batches, and an
+open session keeps working even if something would block new logins.
+
+- **The dry run** (no `--apply`) lists the packages it would remove and the
+  services it would turn off. Nothing changes.
+- **It never removes** the packages the box needs to boot or be reached:
+  `ck-ui`, `ubnt-tools`, `uck-tools`, the model's `*-base-files`, the initramfs
+  and kernel packages, `libpam-usermapper` (SSH login) and
+  `systemd-networkd-fallbacker` (networking). Before each real removal it runs
+  a simulation, and it stops if removing UniFi would take any of these with it.
+- **It removes in small batches** and checks SSH after each one. A failed batch
+  stops the run. Running it again is safe and picks up where it stopped.
+- **Watchdog and updater services** are turned off, not removed.
+- **Firmware 6.x quirks** (a UniFi agent's and PostgreSQL's uninstall scripts
+  fail on this image) are handled for you.
+- **At the end it offers to delete UniFi's leftover data:** `/data/unifi`,
+  `/data/uos`, `/data/autobackup`, `/etc/ustd`, and PostgreSQL's data once no
+  PostgreSQL package is left. `/data/autobackup` holds UniFi's own backups: copy
+  it off first if you might go back to UniFi.
+
+The lists are tested on firmware 5.x and 6.0.10. Newer firmware may add UniFi
+packages the list doesn't know about, which would be left behind. Afterwards,
+look for stragglers with `dpkg -l | grep -iE 'unifi|uos'`.
+
+Reboot by hand afterwards, then check that both your password and your key
+still get you in.
+
+### 6. Set up the base system
+
+`99-verify.sh` first confirms nothing from UniFi is still running.
+`20-provision.sh` then does the following. It's safe to run again.
+
+- **Installs a short list:** `ca-certificates`, `curl`, `git`, `rsync`,
+  `e2fsprogs`, `smartmontools` and `unattended-upgrades`, each needed by a
+  script here or for keeping the box healthy. Anything else (`htop`, `vim`, …)
+  is up to you.
+- **Turns on automatic security updates** with unattended-upgrades.
+- **Sets up time sync.** It uses an NTP service if one is already installed,
+  otherwise it installs `systemd-timesyncd`. The clock's backup battery may be
+  dead or swollen, and HTTPS and apt fail if the clock drifts far.
+- **Adds safe SSH settings** (no X11 forwarding, keepalives) in
+  `/etc/ssh/sshd_config.d/10-ckg2.conf`. It rewrites that file on every run and
+  never changes how you log in; locking down logins is step 13.
+- **Leaves the firewall off**, like a stock Ubuntu or Debian install: every
+  app you install is reachable on your LAN. With `--firewall` it installs ufw,
+  blocks incoming connections except SSH, and each app then needs
+  `ufw allow <port>/tcp`. Without the flag it never turns ufw on or off.
+- **Warns** if you're still on Debian 11 (firmware 5.x), which gets no more
+  security updates.
+
+### 7. Format and mount the 2.5" drive
+
+The drive sits behind a USB-to-SATA bridge inside the box, so it appears as
+`/dev/sda`. The plain Gen2 has no drive bay.
+
+- **A drive UniFi used isn't blank.** It has UniFi's partitions (swap and a
+  data partition, often still mounted at `/volume`, possibly with old Protect
+  recordings). See what's there with `lsblk -f /dev/sda; swapon --show`. The
+  script lists what's in use and releases it only after you confirm.
+- **Layout:** ext4 on the whole disk, no partition table. `--gpt` makes one GPT
+  partition instead, and `--at <dir>` mounts it somewhere other than `/volume`.
+- **Mounting:** by a systemd `.mount` unit, not `/etc/fstab` (UniFi's boot
+  scripts reset fstab at every boot). It's marked `nofail`, so a dead drive
+  doesn't stop the box from booting.
+- **Tuning:** it removes a bogus RAID stripe setting that the USB bridge
+  reports, and turns on weekly TRIM when the drive supports it.
+- **Empty folders directly under `/volume` are deleted at every boot** by a
+  UniFi boot script that stays installed, so nest your folders
+  (`/volume/appdata/<app>`).
+
+### 8. Move logs and home directories to the drive
+
+`35-rehome-storage.sh` copies `/home`, `/var/log`, and `/srv` if it exists to
+`/volume/rehome/<name>`, then bind-mounts each copy over the original.
+
+- The originals stay on the eMMC underneath. If the drive ever fails, the box
+  boots with those instead.
+- `/home` switches over straight away. `/var/log` switches at the next boot,
+  since running services hold it open, hence the reboot.
+- It caps the system journal at 200 MB. `--no-var-log` leaves logs on the eMMC.
+
+Why bind mounts rather than symlinks, and why only these folders:
+[07-storage.md](07-storage.md).
+
+### 9. Set up the front-panel screen
+
+Only one program can drive the screen, so pick one. Each script turns off the
+stock screen service and the other option.
+
+- **`41-install-cloudkey.sh`** installs [jnovack/cloudkey](https://github.com/jnovack/cloudkey):
+  status screens, the LEDs, reset-button actions, burn-in protection and an
+  optional web dashboard. It downloads a pinned release and checks its sha256.
+- **`40-install-lcd.sh`** installs `cklcd`, this repo's small Python tool, for a
+  plain text status screen.
+
+Skip this step and the stock screen service keeps the screen. Details:
+[03-lcd.md](03-lcd.md).
+
+### 10. Check everything
+
+`99-verify.sh` only reads, so run it any time. It checks:
+
+- no UniFi supervisor running and no failed services
+- SSH is up, the network has an address, and the clock is synced
+- `/volume` and the moved folders are mounted
+- the screen service is running
+- the firewall state and the temperatures
+
+### 11. Create your own user
+
+Do this after step 8, so the new home directory is on the drive. The firmware
+image may not include `sudo`, hence the install line. The README copies root's
+SSH keys to the new user. To give it a different key, use
+`./scripts/05-add-ssh-key.sh --user <user> "<public key>"`.
+
+If the new user's login is refused, the SSH config may restrict who can log in:
+check `sshd -T | grep -iE 'allowusers|allowgroups'`.
+
+### 12. Take a final backup
+
+Same as step 2, but it captures the finished setup. It needs root over SSH,
+which step 13 turns off, so do it first. For later backups, see
+[06-accounts-and-access.md](06-accounts-and-access.md) (write the image to the
+drive, then copy it off as your user).
+
+### 13. Lock down SSH
+
+The settings go in their own file, `/etc/ssh/sshd_config.d/00-lockdown.conf`,
+because `20-provision.sh` rewrites `10-ckg2.conf` whenever it runs. Why each
+setting, and how to check it took effect:
+[06-accounts-and-access.md](06-accounts-and-access.md#optional-lock-it-down-only-after-key-login-is-proven).
+
+## Where things live
+
+The OS stays on the internal **eMMC** (`/dev/mmcblk0`, mounted at `/`), which
+has about 6 GB writable. Nothing here reinstalls it. The **2.5" drive**
+(`/dev/sda`, mounted at `/volume`) is for your data and anything that writes a
+lot: app data under `/volume/appdata/<app>`, plus `/home` and `/var/log` after
+step 8. More: [07-storage.md](07-storage.md).
+
+## What each script does
+
+| Script | What it does | Built-in safety |
+|---|---|---|
+| `00-preflight-backup.sh` | Full eMMC image to a file or stdout | Refuses to write onto the eMMC; records a sha256 |
+| `05-add-ssh-key.sh` | Adds an SSH key for root or another user | Only adds a key, never disables anything |
+| `10-deunifi.sh` | Removes UniFi and turns off its watchdog and updater | Dry run by default; simulation stops any removal that would take a protected package; batches with an SSH check after each |
+| `20-provision.sh` | Base packages, security updates, time sync, safe SSH settings; ufw only with `--firewall` | Safe to re-run; never changes how you log in; never turns ufw on or off unless asked |
+| `30-mount-storage.sh` | Formats the drive (ext4) and mounts it at `/volume` | Refuses the eMMC; shows what's in use and asks before wiping; `.mount` unit instead of fstab; `nofail` |
+| `35-rehome-storage.sh` | Moves `/home`, `/var/log` (and `/srv`) to `/volume/rehome/` | Copies, never deletes; skips symlinks and existing mounts; `nofail` bind mounts |
+| `40-install-lcd.sh` | Minimal `cklcd` screen | Checks the screen device first; turns off the other screen services |
+| `41-install-cloudkey.sh` | Full-featured jnovack/cloudkey screen daemon | Pinned release, sha256-checked; turns off the other screen services |
+| `99-verify.sh` | Health check | Read-only |
+
+## Why not dist-upgrade by hand?
+
+Firmware 5.x and older is Debian 11 *bullseye*, whose support ended on
+2026-08-31 (Freexian sells paid extended support beyond that). Firmware 6.x is
+Debian 13 *trixie* on the same 3.18 kernel. That's verified here on a Gen2 Plus
+(6.0.10 → Debian 13.7) and also reported by
+[hutchx86/cloudkey-unas](https://github.com/hutchx86/cloudkey-unas). Updating
+the firmware (step 1) is the supported way off bullseye.
+
+Upgrading Debian by hand is harder than on a PC, because the new userland has to
+run on the old kernel with the old boot image:
 
 | Target | systemd | On the 3.18 kernel |
 |---|---|---|
-| Debian 12 *bookworm* (in LTS since 2026-07, until 2028-06) | 252 | systemd ≥ 251 declares kernels older than **4.15** unsupported. It may still boot, but nobody has shown it on this box. **Untested** — if it fails to boot, the way back is Recovery Mode + restoring your backup ([04](04-recovery.md)). |
-| Debian 13 *trixie* (current stable) | 257 | systemd ≥ 256 **refuses to boot on cgroup-v1-only kernels** unless `SYSTEMD_CGROUP_ENABLE_LEGACY_FORCE=1` is on the kernel command line (here, inside the Android-style `boot.img`); 3.18 has no cgroup v2. Ubiquiti's 6.x firmware evidently handles this in its own boot image/packages — a hand upgrade on the 5.x boot image has no such fix. **Use the firmware route instead.** |
+| Debian 12 *bookworm* (LTS until 2028-06) | 252 | systemd 251 and later don't support kernels older than 4.15. It might boot, but nobody has shown it on this box. If it doesn't, the way back is Recovery Mode and your backup ([04](04-recovery.md)). |
+| Debian 13 *trixie* | 257 | systemd 256 and later **refuse to boot on kernels without cgroup v2**, like 3.18, unless `SYSTEMD_CGROUP_ENABLE_LEGACY_FORCE=1` is on the kernel command line, which lives inside the boot image. Ubiquiti's 6.x firmware deals with this itself; a hand upgrade on the 5.x boot image doesn't. **Use the firmware instead.** |
 
-Also expect: the kept Ubiquiti initramfs/udev/base-files packages were built for
-bullseye, and apt prompts where you must **keep your `sshd_config`** or lose SSH.
-Some `/etc` files get reset on boot by the base-files hooks — keep persistent
-config in systemd units under `/etc/systemd/system`.
+A hand upgrade also means Ubiquiti packages built for bullseye, and apt prompts
+where you must **keep your `sshd_config`** or lose SSH.
 
-If you stay on bullseye, a de-UniFi'd box is still a fine **LAN-only**
-appliance — just don't treat it as a patched, internet-facing server.
+If you stay on bullseye, keep the box on your LAN only: it won't get security
+fixes.
