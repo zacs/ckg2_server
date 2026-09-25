@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # 40-install-lcd.sh — install the `cklcd` front-panel tool and its status
-# daemon, and hand the OLED over from the stock `ck-ui`.
+# daemon, and hand the OLED over from the stock `ck-ui` (or from the jnovack
+# daemon, if 41-install-cloudkey.sh installed it).
 #
 # The front panel is a Linux framebuffer (/dev/fb0). The stock `ck-ui` daemon
 # owns it and will redraw over anything else, so we stop+disable it first, then
 # run cklcd's info screen as a systemd service.
 #
-# Idempotent. Run after 20-provision.sh (which installs python3-pil).
+# Idempotent. Installs its own dependencies (python3-pil, python3-qrcode, fonts).
 #
 # Usage: ./40-install-lcd.sh [-y]
 
@@ -22,21 +23,23 @@ require_root "$@"
 
 [[ -e /dev/fb0 ]] || warn "/dev/fb0 not present — is this a CloudKey with the OLED? Continuing anyway."
 
-# Dependencies (also installed by 20-provision.sh; re-checked here so this
-# script stands alone).
+# Dependencies: only cklcd needs Python + Pillow, so they're installed here
+# rather than by 20-provision.sh.
 if ! python3 -c 'import PIL' 2>/dev/null; then
   log "Installing python3-pil (Pillow) + fonts…"
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     python3-pil python3-qrcode fonts-dejavu-core
 fi
 
-# 1. Take the panel away from the stock UI.
-if systemctl list-unit-files ck-ui.service >/dev/null 2>&1; then
-  log "Stopping and disabling stock ck-ui.service…"
-  systemctl disable --now ck-ui.service 2>/dev/null || true
-else
-  log "ck-ui.service not present (already removed) — good."
-fi
+# 1. Take the panel away from whatever else drives it: the stock ck-ui (still
+#    installed — 10-deunifi.sh deliberately keeps the package) and the
+#    jnovack daemon if 41-install-cloudkey.sh was run earlier.
+for svc in ck-ui.service cloudkey.service; do
+  if systemctl cat "$svc" >/dev/null 2>&1; then
+    log "disabling $svc (only one process may own /dev/fb0)…"
+    systemctl disable --now "$svc" 2>/dev/null || true
+  fi
+done
 
 # 2. Install the tool.
 log "Installing cklcd to /usr/local/bin/cklcd…"

@@ -76,8 +76,32 @@ ssh_alive() {
   return 0
 }
 
-# pkg_installed PKG — true if the package is in state installed (ii).
+# pkg_installed PKG — true only if the package is actually installed (ii).
+# (Uses the *status* field; the first letter of Status-Abbrev is only the
+# desired action, which is also "i" for a half-removed "ic" package.)
 pkg_installed() {
-  local st; st="$(dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null || true)"
-  [[ "$st" == i* ]]
+  local st; st="$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null || true)"
+  [[ "$st" == installed ]]
+}
+
+# pkg_present PKG — true if anything of the package is still on disk: installed,
+# half-installed/configured, or only config files left ("rc" / "ic"). This is
+# what a purge should target, so leftovers get cleaned up too.
+pkg_present() {
+  local st; st="$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null || true)"
+  [[ -n "$st" && "$st" != not-installed ]]
+}
+
+# on_os_storage PATH — true if PATH (or its nearest existing parent) lives on
+# the box's own OS storage rather than the SATA disk / a network share.
+# Don't just test findmnt's SOURCE for /dev/mmcblk*: on current firmware / is
+# an OVERLAY (its writable layer is a ~6 GB eMMC partition), so findmnt reports
+# "overlay" (or /dev/root), which a /dev/mmcblk* pattern silently misses.
+# Comparing the filesystem's device number with /'s catches every variant.
+on_os_storage() {
+  local p="$1" src
+  while [[ ! -e "$p" && "$p" != / ]]; do p="$(dirname "$p")"; done
+  [[ "$(stat -c %d "$p" 2>/dev/null)" == "$(stat -c %d / 2>/dev/null)" ]] && return 0
+  src="$(findmnt -rno SOURCE -T "$p" 2>/dev/null || true)"
+  [[ "$src" == /dev/mmcblk* || "$src" == /dev/root || "$src" == overlay* ]]
 }

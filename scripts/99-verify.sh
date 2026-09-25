@@ -27,6 +27,14 @@ check "sshd accepting connections" ssh_alive
 check "no UniFi 'unifi' service active"        bash -c '! systemctl is-active --quiet unifi.service'
 check "no UniFi supervisor (uhwd) active"      bash -c '! systemctl is-active --quiet uhwd.service'
 check "no infctld active"                      bash -c '! systemctl is-active --quiet infctld.service'
+# Leftovers that crash-loop after de-UniFi (e.g. an nginx that only fronted
+# unifi-core) show up here. Informational: judge each one, then disable it.
+failed="$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | xargs)"
+if [[ -n "$failed" ]]; then
+  warn "failed units: $failed   (inspect: systemctl status <unit>; clear: systemctl reset-failed)"
+else
+  ok "no failed systemd units"
+fi
 # One (and only one) front-panel daemon should be running.
 if systemctl is-active --quiet cloudkey.service 2>/dev/null; then
   ok "front-panel daemon active: cloudkey (jnovack)"; pass=$((pass+1))
@@ -55,33 +63,19 @@ log "eMMC: $(lsblk -dno NAME,SIZE /dev/mmcblk0 2>/dev/null)"
 # Rehomed dirs (35-rehome-storage.sh) — anything still on the eMMC keeps wearing it.
 for d in /home /srv /var/log; do
   src="$(findmnt -rno SOURCE "$d" 2>/dev/null || true)"
-  if [[ -n "$src" && "$src" != /dev/mmcblk* ]]; then
+  if [[ ! -e "$d" ]]; then
+    log "$d does not exist on this image (nothing to rehome)"
+  elif [[ -L "$d" ]]; then
+    log "$d is a symlink -> $(readlink "$d")"
+  elif [[ -n "$src" ]] && ! on_os_storage "$d"; then
     ok "$d rehomed (from $src)"
   else
     log "$d on root/eMMC (not rehomed)"
   fi
 done
 
-echo; echo "== docker (if installed) =="
-if command -v docker >/dev/null 2>&1; then
-  if docker info >/dev/null 2>&1; then
-    root="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null)"
-    drv="$(docker info -f '{{.Driver}}' 2>/dev/null)"
-    rootsrc="$(findmnt -rno SOURCE -T "$root" 2>/dev/null || true)"
-    if [[ -n "$rootsrc" && "$rootsrc" != /dev/mmcblk* ]]; then
-      ok "docker data-root $root on $rootsrc (off the eMMC), driver=$drv"; pass=$((pass+1))
-    else
-      warn "docker data-root $root is on the eMMC ($rootsrc) — see 50-install-docker.sh / docs/10"
-    fi
-  else
-    warn "docker installed but daemon not responding (journalctl -u docker)"
-  fi
-else
-  log "docker not installed"
-fi
-
 echo; echo "== network / PoE =="
-# NIC is the USB ASIX AX88179; if you're reading this over SSH, PoE/USB-C power
+# NIC is the USB ASIX AX88179; if you're reading this over SSH, PoE power
 # and the NIC are obviously fine, but report the details anyway.
 IFACE="$(ip -o -4 route show to default 2>/dev/null | awk '{print $5; exit}')"
 if [[ -n "${IFACE:-}" ]]; then
@@ -92,15 +86,28 @@ else
   err "no default route found"
 fi
 
+if timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -qx yes; then
+  ok "clock synchronised (NTP)"
+else
+  warn "clock NOT NTP-synchronised yet (timedatectl status) — TLS/apt break if it drifts far"
+fi
+if ufw status 2>/dev/null | grep -q '^Status: active'; then
+  log "firewall: ufw ACTIVE — new services need 'ufw allow <port>' to be reachable"
+else
+  log "firewall: off (stock default) — listening services are reachable on the LAN"
+fi
+
 echo; echo "== panel =="
 # Report the framebuffer and the LCD daemon independently (they're separate
 # concerns — the panel isn't taken over until the LCD step).
 if [[ -e /dev/fb0 ]]; then
   ok "framebuffer /dev/fb0 present"
-  if command -v cklcd >/dev/null 2>&1; then
+  if systemctl is-active --quiet cloudkey.service 2>/dev/null; then
+    log "driven by the jnovack cloudkey daemon (journalctl -u cloudkey for its resolution line)"
+  elif command -v cklcd >/dev/null 2>&1; then
     log "$(cklcd probe 2>&1 || echo 'cklcd probe failed')"
   else
-    log "cklcd not installed yet — run 40-install-lcd.sh or 41-install-cloudkey.sh"
+    log "no panel daemon yet (stock ck-ui still owns it) — run 41-install-cloudkey.sh or 40-install-lcd.sh"
   fi
 else
   warn "/dev/fb0 not present. Before the LCD step this may be normal; if it persists, check:"
@@ -108,15 +115,29 @@ else
 fi
 
 echo; echo "== thermals (fanless — keep an eye on this) =="
-# Many Qualcomm thermal zones are unpopulated and read 0°C — skip those.
-skipped=0
-for z in /sys/class/thermal/thermal_zone*/temp; do
-  [[ -r "$z" ]] || continue
-  t=$(cat "$z" 2>/dev/null); c=$((t/1000))
-  if (( c == 0 )); then skipped=$((skipped+1)); continue; fi
-  printf '   %s: %s°C\n' "$(dirname "$z" | xargs basename)" "$c"
+# Units are MIXED on this kernel (measured on a Gen2 Plus): the SoC's 16
+# tsens_tz_sensor* zones report TENTHS of a degree (474 = 47.4°C), while the
+# board/PMIC/battery zones (xo_therm, pm8953_tz, battery) report millidegrees
+# (43000 = 43°C). The SoC sensors are summarised on one line; hide true 0s.
+skipped=0; soc_min=""; soc_max=""; soc_n=0
+for z in $(ls -d /sys/class/thermal/thermal_zone* 2>/dev/null | sort -V); do
+  [[ -r "$z/temp" ]] || continue
+  t="$(cat "$z/temp" 2>/dev/null)"; [[ "$t" =~ ^-?[0-9]+$ ]] || continue
+  if (( t == 0 )); then skipped=$((skipped+1)); continue; fi
+  type="$(cat "$z/type" 2>/dev/null)"
+  if (( t >= 1000 || t <= -1000 )); then c=$((t/1000))
+  elif [[ "$type" == tsens* ]]; then c=$((t/10))
+  else c=$t; fi
+  if [[ "$type" == tsens* ]]; then
+    soc_n=$((soc_n+1))
+    [[ -z "$soc_min" || "$c" -lt "$soc_min" ]] && soc_min=$c
+    [[ -z "$soc_max" || "$c" -gt "$soc_max" ]] && soc_max=$c
+    continue
+  fi
+  printf '   %-22s %s°C\n' "$type" "$c"
 done
-(( skipped > 0 )) && printf '   (%d unpopulated 0°C zones hidden)\n' "$skipped"
+(( soc_n > 0 )) && printf '   %-22s %s–%s°C  (%d tsens sensors)\n' "SoC" "$soc_min" "$soc_max" "$soc_n"
+(( skipped > 0 )) && printf '   (%d zones reading 0 hidden)\n' "$skipped"
 
 echo
 if [[ "$fail" -eq 0 ]]; then ok "All $pass checks passed."; else err "$fail check(s) failed, $pass passed."; fi

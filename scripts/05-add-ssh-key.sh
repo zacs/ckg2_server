@@ -6,7 +6,7 @@
 # the password you set in the UniFi OS GUI." That password survives de-UniFi
 # (it's in /etc/shadow, not the UniFi database) — but you should not bet your
 # only access on it during surgery. Install a key, TEST it on a fresh
-# connection, and only then proceed. See docs/09-accounts-and-access.md.
+# connection, and only then proceed. See docs/06-accounts-and-access.md.
 #
 # This script ONLY adds a key. It does not remove password auth and cannot lock
 # you out.
@@ -66,4 +66,4 @@ echo "  You should get in WITHOUT being asked for a password. Keep this current"
 echo "  session open until that succeeds."
 echo
 log "Only once key login is confirmed should you run 10-deunifi.sh."
-log "Do NOT disable password auth yet — see docs/09-accounts-and-access.md for the safe order."
+log "Do NOT disable password auth yet — see docs/06-accounts-and-access.md for the safe order."

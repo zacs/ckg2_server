@@ -1,251 +1,275 @@
-# ckg2_server — turn a UniFi CloudKey Gen2+ into a tiny Linux server
+# ckg2_server — turn a UniFi CloudKey Gen2 into a small Linux server
 
-Repurpose a **UniFi CloudKey Gen2 / Gen2 Plus** (`UCK-G2` / `UCK-G2-PLUS`) into a
-small, PoE-powered, fanless ARM micro-server running plain Debian — with the
-internal SATA disk, PoE, and the front-panel OLED all working, and no more UniFi
-"reboot when it's unhappy" behaviour.
+Turn a **UniFi CloudKey Gen2 Plus** (`UCK-G2-PLUS`) or **Gen2** (`UCK-G2`) into
+a quiet, PoE-powered Debian server. When you're done you have:
 
-It's a lovely little box for the job: 8-core ARM, 3 GB RAM, a 2.5" drive bay, and
-it sips power over a single PoE cable. This repo gives you a **tested, low-risk
-path** to reclaim it, the scripts and config to do it, a Python tool to drive the
-LCD, and honest documentation of the sharp edges (including the ambitious
-full-reflash and mainline-kernel paths).
+- **Debian 13** with the UniFi software removed, so no more self-reboots
+- the **2.5" drive** formatted and mounted at `/volume` for your data
+- **automatic security updates**, time sync, and SSH key login
+- the **front-panel screen** showing status (optional)
 
-> **The most important fact up front:** despite what half the internet says, the
-> CloudKey Gen2 is **not** a Marvell Armada 3720. It's a **Qualcomm APQ8053
-> (Snapdragon 625)**. That changes the boot process, the recovery method, and
-> the mainline-kernel story. Details in [docs/01-hardware.md](docs/01-hardware.md).
+No case opening and no serial cable: everything happens over SSH.
 
----
+## Before you start
 
-## Two ways to do this
+- A CloudKey **Gen2 Plus** or **Gen2**. The drive steps need the Plus (the
+  plain Gen2 has no drive bay).
+- SSH turned on in the UniFi OS settings, and its root password.
+- A computer on the same network with a few GB free for a backup.
+- **The 2.5" drive gets erased.** Copy off anything you want to keep, such as
+  old UniFi Protect recordings.
+- Skim [If something goes wrong](#if-something-goes-wrong) first.
 
-| | **Path A — Reclaim stock (recommended)** | **Path B — Full eMMC reflash (advanced)** |
-|---|---|---|
-| What | Remove the UniFi layer + supervisor; keep the Debian underneath | Wipe eMMC, flash a clean Debian rootfs |
-| Disassembly / serial | **No** | **Yes** (UART required) |
-| Brick risk | Low | Real |
-| Kernel | Vendor `3.18.44-ui-qcom` (old, rock-solid) | Vendor kernel (or experimental mainline) |
-| Rootfs | Stock Debian, UniFi stripped | Pristine Debian you install |
-| Reboots / persistence | Fixed by removing the supervisor; mounts via systemd units | Clean by construction |
-| Guide | **[docs/03-install-stock.md](docs/03-install-stock.md)** | [docs/04-install-reflash.md](docs/04-install-reflash.md) |
+Commands marked **(workstation)** run on your computer. Everything else runs on
+the CloudKey over SSH, as `root` until you create your own user in step 11.
+Replace `<cloudkey>` with its IP address or hostname.
 
-**Stock UniFi OS is already Debian.** "Installing Linux" on Path A means removing
-UniFi Network/Protect, MongoDB, the UniFi-OS agents, and the watchdog/supervisor
-that reboots the box — leaving a normal Debian you fully control. It meets every
-goal (persistent server, SATA disk, PoE, LCD) **without opening the case**, so
-it's the right default. Path B is here for people who specifically want a
-pristine, OverlayFS-free rootfs.
+## Install
 
----
+### 1. Update to current firmware
 
-## Quick start (Path A)
-
-Do this **on the CloudKey, over an interactive SSH session** (enable SSH in the
-UniFi OS settings first). Copy this repo onto the box (`git clone` or `scp -r`).
+Firmware 6.x is Debian 13. Firmware 5.x and older is Debian 11, which stopped
+getting security updates on 2026-08-31.
 
 ```bash
-cd ckg2_server/scripts
-
-sudo ./00-preflight-backup.sh --stdout | gzip -1 > /some/mounted/ck.img.gz  # 0. SAFETY NET (image the eMMC)
-#   ^ no USB port on this box — back up over the network instead. From your workstation:
-#     ssh root@<cloudkey> 'gzip -1 < /dev/mmcblk0' > cloudkey-emmc.img.gz
-sudo passwd root                                         # 1. set a KNOWN root password
-sudo ./05-add-ssh-key.sh ~/.ssh/id_ed25519.pub          #    + install an SSH key, then TEST it
-                                                         #    from a 2nd terminal before continuing
-sudo ./10-deunifi.sh                                     # 2. dry run — see the plan, change nothing
-sudo ./10-deunifi.sh --apply                             # 3. remove UniFi + disable the watchdog
-sudo reboot                                              # 4. reboot by hand, then SSH back in
-
-sudo ./99-verify.sh                                      # 5. confirm a clean boot
-sudo ./20-provision.sh                                   # 6. tools, firewall, auto-updates, NTP
-sudo ./30-mount-storage.sh /dev/sda                      # 7. format + mount the 2.5" disk at /volume
-sudo ./41-install-cloudkey.sh                            # 8. rich OLED daemon (LEDs, button, web dashboard)
-
-sudo ./35-rehome-storage.sh                              # 9. (optional) /home + /srv + /var/log onto the SATA disk
-sudo ./50-install-docker.sh                              #    (optional) Docker, runtime on /volume, logs capped
-sudo ./99-verify.sh                                      # 10. final health check
+cat /etc/os-release              # "trixie": skip this step. "bullseye": update.
+ubnt-systool fwupdate <firmware-URL>
 ```
 
-That's it — a Debian box with `/volume` for bulk data, a firewall, automatic
-security updates, and the front panel showing hostname / IP / uptime. `apt
-install` whatever you want from here.
+Get the URL from [ui.com/download](https://ui.com/download) → Cloud Keys → your
+model. The file name contains `UCKP` for the Gen2 Plus and `UCKG2` for the
+Gen2. For example, Gen2 Plus 6.0.10:
+`https://fw-download.ubnt.com/data/unifi-cloudkey/9c12-UCKP-6.0.10-222899cf-67fc-434d-855b-1499dfb2b0fe.bin`
 
-**Where does the OS live, and where does Docker go?** The OS stays on the
-**eMMC** (`/dev/mmcblk0`, mounted at `/`) — Path A never reinstalls it, it just
-strips UniFi off the top. The 2.5" SATA disk (`/dev/sda` → `/volume`) is bulk
-storage and the home for anything write-heavy. Docker's runtime defaults to
-`/var/lib/docker` **on the eMMC**; `50-install-docker.sh` relocates it to
-`/volume/docker` and caps container logs, and `35-rehome-storage.sh` can move
-`/home`, `/srv`, and `/var/log` off the eMMC too — because the eMMC is soldered
-down and wears out, while the SATA disk is swappable. Full detail:
-[docs/10-storage-and-docker.md](docs/10-storage-and-docker.md).
+It downloads about 860 MB, flashes, and reboots on its own. SSH back in and
+check that `cat /etc/os-release` says `trixie`.
 
-**Credentials, in one line:** after de-UniFi you're still **`root` with the same
-SSH password** — it lives in `/etc/shadow`, not the UniFi database, so the purge
-doesn't touch it. Step 1 above just makes sure you have a *known* password plus a
-tested key **before** surgery, so you can't get locked out. Full explanation of
-the two account systems and how to (safely) harden or add a sudo user:
-[docs/09-accounts-and-access.md](docs/09-accounts-and-access.md).
+### 2. Back up the internal storage (workstation)
 
-The scripts are **safe by default**: `10-deunifi.sh` only simulates until you
-pass `--apply`, it refuses to remove any package whose loss would brick the box,
-and it purges in small batches with an SSH liveness check between each. See the
-table in [docs/03-install-stock.md](docs/03-install-stock.md).
-
----
-
-## The front-panel LCD
-
-The screen is a ~160×64 mono OLED exposed as a **plain Linux framebuffer
-(`/dev/fb0`)** — no weird protocol. You get two options; pick one (only one
-process may own the framebuffer at a time):
-
-**Featured — the `jnovack/cloudkey` daemon** (`41-install-cloudkey.sh`). A mature
-Go daemon that drives the OLED *and* the status LEDs, reacts to the front button
-(short/long-press "bands", stealth mode), mitigates OLED burn-in, and serves an
-optional live web dashboard. The installer pulls a pinned prebuilt armhf release,
-verifies it, and hands the panel over from stock `ck-ui`.
-
-**Lightweight — this repo's `cklcd`** (`40-install-lcd.sh`). A single dependency-
-light Python 3 script (needs `python3-pil`) if you just want text on the panel:
+This copies the CloudKey's whole internal eMMC to your computer, so you can
+always get back to this point. It takes a while.
 
 ```bash
-cklcd info                     # live host / IP / uptime / load / temp / disk (loops)
-cklcd text "hello\nworld"      # arbitrary text
-cklcd qr "https://server.lan"  # a QR code
-cklcd image logo.png           # an image
-cklcd probe                    # show detected panel geometry + pixel format
+ssh root@<cloudkey> 'gzip -1 < /dev/mmcblk0' > cloudkey-emmc.img.gz
+gzip -t cloudkey-emmc.img.gz     # no output means the file is complete
 ```
 
-Both run as a systemd service. Full comparison, design notes, and how to show
-custom content: [docs/05-lcd.md](docs/05-lcd.md).
+How to restore it: [docs/04-recovery.md](docs/04-recovery.md).
 
----
+### 3. Set up SSH key login (workstation)
 
-## Hardware at a glance
+```bash
+ssh-copy-id root@<cloudkey>
+ssh -o PasswordAuthentication=no root@<cloudkey> true && echo "key login works"
+```
 
-Full teardown-level detail in [docs/01-hardware.md](docs/01-hardware.md). The
-highlights that affect how you use it:
+Also make sure you know the root password (`passwd root` on the CloudKey sets
+it). It's your way back in if the key ever fails.
 
-- **SoC:** Qualcomm APQ8053 (Snapdragon 625), 8× Cortex-A53. **aarch64 kernel**;
-  userland is firmware-dependent — **arm64** on current bullseye firmware, armhf
-  on older. Check with `uname -m` and `dpkg --print-architecture` (it decides
-  your container/binary arch).
-- **RAM / flash:** 3 GB (Plus) / 2 GB; 32 GB eMMC (`/dev/mmcblk0`).
-- **NIC and disk are both USB** behind an internal hub: Ethernet is an ASIX
-  AX88179 (`ax88179_178a`); the 2.5" bay is a USB-SATA bridge showing up as
-  `/dev/sda`. No native SATA/AHCI.
-- **Power:** 802.3af PoE (≤12.95 W) **or** USB-C (QC 2.0, ≤16 W).
-- **Panel:** mono OLED on `/dev/fb0`; front button on `/dev/input/event1`.
-- **Fanless**, and there's an internal battery that can swell — read the safety
-  notes below.
+### 4. Get this repo onto the CloudKey
 
-### ⚠️ Safety before you power on / open one
+```bash
+apt-get update && apt-get install -y git
+git clone https://github.com/zacs/ckg2_server && cd ckg2_server
+```
 
-- **The internal battery swells** (especially the Plus's 7.4 V pack) and is a
-  common cause of dead units. If yours is old, inspect it; many people just
-  disconnect it (the box runs fine on PoE/USB-C — you only lose battery-backed
-  clean shutdown; NTP keeps the clock).
-- **It's fanless and runs hot.** Give it airflow; `99-verify.sh` prints thermal
-  zones.
-- **Always take a full eMMC backup before changing anything** (`00-preflight-backup.sh`).
-- **Never write to the Qualcomm firmware partitions** (`sbl1`, `rpm`, `tz`,
-  `devcfg`, `aboot`, `recovery`) — leaving `recovery` intact is what keeps a
-  bricked box recoverable.
+### 5. Remove UniFi
 
----
+```bash
+./scripts/10-deunifi.sh          # dry run: lists what it would remove, changes nothing
+./scripts/10-deunifi.sh --apply  # removes it (asks first)
+reboot
+```
+
+Check the **Would remove** list before applying: it should be UniFi packages
+only. The script won't remove anything the box needs to boot, and it checks
+that SSH still works after each batch. If a batch reports **FAILED**, running
+it again is safe.
+
+### 6. Set up the base system
+
+```bash
+cd ckg2_server
+./scripts/99-verify.sh           # should show no UniFi services running
+./scripts/20-provision.sh        # base packages, security updates, time sync
+```
+
+Like a stock Ubuntu or Debian install, no firewall is turned on, so anything
+you install is reachable on your LAN. Add `--firewall` if you want one; then
+each app needs `ufw allow <port>`.
+
+### 7. Format and mount the 2.5" drive (erases it)
+
+```bash
+./scripts/30-mount-storage.sh /dev/sda
+```
+
+It shows what's on the drive and asks before wiping. The drive is mounted at
+`/volume`, and again at every boot.
+
+### 8. Move logs and home directories to the drive (recommended)
+
+```bash
+./scripts/35-rehome-storage.sh
+reboot
+```
+
+The internal eMMC is soldered to the board and wears out with writes. This
+moves `/home` and `/var/log` onto the drive, which you can replace.
+
+### 9. Set up the front-panel screen (optional)
+
+```bash
+cd ckg2_server
+./scripts/41-install-cloudkey.sh   # status screens, LEDs, button, optional web dashboard
+```
+
+Or use `./scripts/40-install-lcd.sh` for a minimal text-only screen. Pick one.
+Details: [docs/03-lcd.md](docs/03-lcd.md).
+
+### 10. Check everything
+
+```bash
+./scripts/99-verify.sh
+```
+
+### 11. Create your own user (recommended)
+
+So day-to-day work doesn't happen as root. Replace `<user>` with the name you
+want.
+
+```bash
+command -v sudo || apt-get install -y sudo
+adduser <user>                   # the password you set is what sudo asks for
+usermod -aG sudo <user>
+install -d -m 700 -o <user> -g <user> /home/<user>/.ssh
+install -m 600 -o <user> -g <user> /root/.ssh/authorized_keys /home/<user>/.ssh/
+```
+
+Test it from a **new** terminal on your workstation, keeping your root session
+open:
+
+```bash
+ssh <user>@<cloudkey> 'sudo -v && echo "sudo works"'
+```
+
+From now on, log in as `<user>` and put `sudo` in front of the scripts. Your
+user can't read root's copy of the repo, so clone your own:
+
+```bash
+git clone https://github.com/zacs/ckg2_server ~/ckg2_server
+sudo rm -rf /root/ckg2_server    # optional: remove root's copy
+```
+
+## Optional final steps
+
+### 12. Take a final backup (workstation)
+
+This captures the finished setup, so a restore brings you back here instead of
+to stock UniFi. Do it **before step 13**: after that, root can't log in over
+SSH.
+
+```bash
+ssh root@<cloudkey> 'gzip -1 < /dev/mmcblk0' > cloudkey-emmc-final.img.gz
+gzip -t cloudkey-emmc-final.img.gz
+```
+
+### 13. Lock down SSH
+
+This allows key login only and turns off root login. Do it only after step
+11's test worked.
+
+```bash
+sudo tee /etc/ssh/sshd_config.d/00-lockdown.conf >/dev/null <<'EOF'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+PermitRootLogin no
+EOF
+sudo sshd -t && sudo systemctl reload ssh     # sshd -t checks the config first
+sudo sshd -T | grep -E '^(passwordauthentication|kbdinteractiveauthentication|permitrootlogin) '
+```
+
+The last command should show `no` for all three. Keep your current session
+open and test from a new terminal: `ssh <user>@<cloudkey>` should work, and
+`ssh root@<cloudkey>` should be refused. To undo, delete the file and reload
+SSH. More detail: [docs/06-accounts-and-access.md](docs/06-accounts-and-access.md).
+
+## Using the server
+
+- **Install software** with `sudo apt install …` or an app's own Linux
+  installer. Docker doesn't work: the 3.18 kernel is too old.
+- **Keep app data on the drive**, under `/volume/appdata/<app>`, and make the
+  app's service wait for the drive at boot. How: [docs/07-storage.md](docs/07-storage.md#running-your-own-services).
+- **Security updates** for Debian 13 install automatically.
+- **Keep it on your LAN.** Don't port-forward to it: the kernel is old and can't
+  be upgraded.
+
+## Good to know
+
+- **It's a Qualcomm chip.** The CloudKey Gen2 uses a Qualcomm APQ8053
+  (Snapdragon 625), not the Marvell chip many online guides assume, so most
+  "CloudKey Linux" advice doesn't apply. It has 8 cores, 3 GB of RAM on the Plus
+  (2 GB on the Gen2), and 32 GB of eMMC, of which only **about 6 GB** is
+  writable for the OS: keep big things on `/volume`. The network port and the
+  drive both connect over internal USB. Details:
+  [docs/01-hardware.md](docs/01-hardware.md).
+- **It's fanless.** `99-verify.sh` prints temperatures; about 45 °C at idle is
+  normal.
+- **The internal battery can swell** on older units. It only provides a clean
+  shutdown when power drops, and the box runs fine on PoE without it.
+- **Some UniFi boot behaviour remains:** `/etc/fstab` is reset at every boot,
+  so the scripts use systemd units instead. Empty folders directly under
+  `/volume` are deleted at boot, so nest your folders (`/volume/appdata/<app>`).
+  Details: [docs/05-watchdog-and-persistence.md](docs/05-watchdog-and-persistence.md).
 
 ## If something goes wrong
 
-The CloudKey has a real recovery firmware. Hold the reset button ~10 s on
-power-on → **Recovery Mode** → reflash stock with `ubnt-tool fwupdate`, or
-`dd`-restore your backup. Full ladder in [docs/06-recovery.md](docs/06-recovery.md).
+- **Recovery Mode:** hold the reset button for about 10 seconds while powering
+  on. The box then serves a web page and SSH (`root` / `ubnt`), from which you
+  can reinstall stock firmware or restore your backup. Step by step:
+  [docs/04-recovery.md](docs/04-recovery.md).
+- Recovery Mode lives in its own partition. Never write to the Qualcomm
+  firmware partitions (`sbl1`, `rpm`, `tz`, `devcfg`, `aboot`, `recovery`):
+  they're what make the box recoverable. Nothing in this repo touches them.
 
----
+## What's in this repo
 
-## Repository layout
+| Script | What it does |
+|---|---|
+| `scripts/00-preflight-backup.sh` | eMMC backup from the box itself (an alternative to step 2) |
+| `scripts/05-add-ssh-key.sh` | adds an SSH key from pasted text (an alternative to `ssh-copy-id`) |
+| `scripts/10-deunifi.sh` | removes UniFi; dry run by default |
+| `scripts/20-provision.sh` | base packages, security updates, time sync, optional firewall |
+| `scripts/30-mount-storage.sh` | formats and mounts the 2.5" drive at `/volume` |
+| `scripts/35-rehome-storage.sh` | moves `/home` and `/var/log` onto the drive |
+| `scripts/40-install-lcd.sh` / `41-install-cloudkey.sh` | front-panel screen: minimal / full-featured |
+| `scripts/99-verify.sh` | read-only health check |
 
-```
-ckg2_server/
-├── README.md                     ← you are here
-├── scripts/
-│   ├── lib/common.sh             shared helpers (logging, confirm, model detect, liveness)
-│   ├── 00-preflight-backup.sh    image the eMMC to a file (safety net)
-│   ├── 05-add-ssh-key.sh         install + verify an SSH key before surgery (no lockout)
-│   ├── 10-deunifi.sh             remove UniFi + disable the supervisor/watchdog (dry-run by default)
-│   ├── 20-provision.sh           base tools, ufw, unattended-upgrades, NTP, SSH hardening
-│   ├── 30-mount-storage.sh       format + persistently mount /dev/sda (systemd .mount, not fstab)
-│   ├── 35-rehome-storage.sh      bind /home, /srv, /var/log onto /volume (nofail) to spare the eMMC
-│   ├── 40-install-lcd.sh         install the lightweight cklcd panel tool + service
-│   ├── 41-install-cloudkey.sh    install the richer jnovack/cloudkey daemon (LEDs, button, web UI)
-│   ├── 50-install-docker.sh      install Docker; runtime → /volume/docker; cap container logs
-│   └── 99-verify.sh              read-only post-install health check
-├── lcd/
-│   └── cklcd                     Python framebuffer tool for the front panel
-├── systemd/
-│   ├── cklcd.service             the LCD status daemon unit
-│   └── volume.mount.example      paste-in disk mount unit (why: fstab gets rewritten)
-├── config/
-│   ├── cklcd.env.example         config for cklcd.service (→ /etc/cklcd.env)
-│   └── docker-daemon.json.example  Docker data-root + log-cap config (→ /etc/docker/daemon.json)
-├── examples/
-│   └── compose.example.yml       paste-in stack: Technitium DNS + Uptime Kuma (out-of-band watcher) + Arcane/Beszel agents (arm64)
-└── docs/
-    ├── 01-hardware.md            teardown-level BOM + the APQ8053 correction
-    ├── 02-serial-console.md      UART header, adapter, baud
-    ├── 03-install-stock.md       Path A walkthrough (recommended)
-    ├── 04-install-reflash.md     Path B full reflash (advanced)
-    ├── 05-lcd.md                 the framebuffer panel + cklcd
-    ├── 06-recovery.md            un-bricking
-    ├── 07-watchdog-and-persistence.md   why it reboots + making changes stick
-    ├── 08-mainline-kernel.md     experimental modern-kernel research
-    ├── 09-accounts-and-access.md credentials, SSH, and not locking yourself out
-    └── 10-storage-and-docker.md  OS-on-eMMC vs SATA disk, Docker runtime/volumes, rehoming
-```
+Background reading in [`docs/`](docs): [hardware](docs/01-hardware.md),
+[install details](docs/02-install.md), [front panel](docs/03-lcd.md),
+[recovery](docs/04-recovery.md), [reboots and persistence](docs/05-watchdog-and-persistence.md),
+[accounts and SSH](docs/06-accounts-and-access.md), [storage and running services](docs/07-storage.md).
 
----
+## Credits
 
-## Requirements
-
-- A UniFi CloudKey **Gen2** or **Gen2 Plus**. (The Plus has the 2.5" drive bay
-  and 3 GB RAM; the plain Gen2 has no bay and 2 GB. Everything here works on both;
-  disk steps are Plus-only.)
-- For Path A: network + SSH access. Nothing else.
-- For Path B / recovery / mainline: a **3.3 V** USB-TTL serial adapter
-  ([docs/02-serial-console.md](docs/02-serial-console.md)).
-
----
-
-## Credits & sources
-
-This repo stands on a lot of community reverse-engineering. In particular:
-
-- **[jnovack/cloudkey](https://github.com/jnovack/cloudkey)** — a mature Go
-  rewrite of the stock `ck-ui` front-panel daemon, and a battle-tested
-  de-Ubiquiti runbook. The package/unit lists in `10-deunifi.sh` are derived from
-  it, and it's an excellent richer alternative to `cklcd` (LEDs, button bands,
-  web dashboard). Huge thanks.
-- **[Colin Cogle — "Rescuing a UniFi Cloud Key Gen2 Plus"](https://colincogle.name/blog/unifi-cloud-key-rescue/)**
-  — serial console (J22), Recovery Mode, `ubnt-tool fwupdate`.
-- **[XDA: "UniFi Cloud Key Gen 2 Plus" thread](https://xdaforums.com/t/unifi-cloud-key-gen-2-plus.4664639/)**
-  (bean72 et al.) — the canonical full-reflash method and mainline-kernel
-  attempts.
-- **[FullDuplexTech](https://fullduplextech.com/turn-unifi-cloud-key-gen-2-into-a-headless-linux-server/)**
-  — the stay-on-stock, dist-upgrade approach.
-- **[msm8953-mainline](https://github.com/msm8953-mainline/linux)** &
-  **[postmarketOS MSM8953 wiki](https://wiki.postmarketos.org/wiki/Qualcomm_Snapdragon_450/625/626/632_(MSM8953))**
-  — the real mainline base for this SoC.
-- FCC internal-photo teardowns for **[SWX-UCKG2P](https://fccid.io/SWX-UCKG2P)** /
-  **[SWX-UCKG2](https://fccid.io/SWX-UCKG2)** — the hardware BOM.
+- **[jnovack/cloudkey](https://github.com/jnovack/cloudkey)**: the front-panel
+  daemon, and the runbook that the UniFi removal list is based on.
+- **[hutchx86/cloudkey-unas](https://github.com/hutchx86/cloudkey-unas)**: first
+  evidence that firmware 6.x runs Debian 13 on this hardware.
+- **[Colin Cogle](https://colincogle.name/blog/unifi-cloud-key-rescue/)**:
+  Recovery Mode and `ubnt-tool fwupdate`.
+- **[FullDuplexTech](https://fullduplextech.com/turn-unifi-cloud-key-gen-2-into-a-headless-linux-server/)**:
+  the stay-on-stock approach.
+- FCC teardown photos of the [SWX-UCKG2P](https://fccid.io/SWX-UCKG2P) and
+  [SWX-UCKG2](https://fccid.io/SWX-UCKG2).
 
 ## Disclaimer
 
-Modifying your CloudKey voids its warranty, removes UniFi functionality, and can
-brick the device if you deviate from the safe path. Everything here is provided
-as-is, no guarantees. Take the backup. Read [docs/06-recovery.md](docs/06-recovery.md)
-**before** you start, not after.
+This voids the warranty and removes UniFi. Taking the backup in step 2 and
+knowing Recovery Mode are what keep it low-risk. Provided as-is, with no
+guarantees.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

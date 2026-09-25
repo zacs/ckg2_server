@@ -1,4 +1,4 @@
-# 07 — Reboots, watchdogs, and making changes stick
+# 05 — Reboots, watchdogs, and making changes stick
 
 Two of the user's core requirements — "without it rebooting" and "survive
 reboots" — come down to understanding what makes a CloudKey reboot itself and
@@ -9,8 +9,10 @@ what silently un-does your changes. Here's the whole picture.
 The scary "it just keeps rebooting when UniFi isn't happy" behaviour is **not** a
 hardware timer that will fight a custom OS. It's the **UniFi OS process
 supervisor / health-check layer** (`uhwd` — the UniFi hardware watchdog daemon —
-plus `infctld` and friends) deciding its own containers/DB/HDD are unhealthy and
-restarting or rebooting to "fix" it.
+and the UniFi OS agents) deciding its own services/DB/HDD are unhealthy and
+restarting or rebooting to "fix" it. (`infctld`, which `10-deunifi.sh` also
+disables, is just Ubiquiti's network-discovery daemon — UDP 10001 + CDP — not
+part of the reboot machinery.)
 
 There are, separately, two *real* low-level watchdogs, and neither cares what
 userland you run:
@@ -25,8 +27,7 @@ userland you run:
 **Conclusion:** you don't need to "defeat a watchdog." You remove the UniFi
 supervisor, and the self-reboots stop. That's exactly what `10-deunifi.sh` does —
 it purges the UniFi apps and `disable`s `uhwd.service`, `infctld.service`, and
-the setup/splash units. On a full reflash ([04](04-install-reflash.md)) the
-supervisor is gone by construction.
+the setup/splash units.
 
 ## Why your changes sometimes vanish on reboot (and the fix)
 
@@ -48,19 +49,33 @@ The fix this repo uses everywhere: **persist via `systemd` unit files under
 If you find another file getting reset, don't fight the hook — move whatever you
 needed into a systemd unit instead.
 
-> Full reflash removes this entirely: you leave the UniFi base-files package
-> behind, so nothing rewrites `/etc`. On a reflashed system, `/etc/fstab` is
-> fine. This gotcha is specific to the "reclaim stock" path — which is still the
-> recommended one, because a `.mount` unit is a small price for not opening the
-> case.
+## Other boot hooks that are still running
+
+De-UniFi keeps the load-bearing `ubnt-tools` + `*-base-files` packages, and their
+boot-time hook framework (`/usr/lib/ubnt/hooks/…`) keeps running. Known
+behaviours, from [jnovack's runbook](https://github.com/jnovack/cloudkey):
+
+- **`/etc/fstab` is reset** (above).
+- **Empty directories directly under `/volume` are deleted on every boot**
+  (`mp-clean volume`, meant for stale UniFi partition mountpoints). Nest your data
+  (`/volume/appdata/<app>` for service data, `/volume/rehome/…` for what
+  `35-rehome-storage.sh` moves) or drop a `.keep` file into any top-level
+  directory that may sit empty.
+- **Power-loss shutdown.** `/lib/udev/rules.d/40-powerloss.rules` sends `SIGPWR`
+  to systemd whenever a power supply's `online` flips to `0`, and
+  `device-powerloss.service` then runs a clean `poweroff` when PoE drops. Never
+  remove either — it's what the battery exists for, and it protects whatever you
+  run on the box.
 
 ## Quick reference
 
-| You want to… | Do this (stock path) | Not this |
+| You want to… | Do this | Not this |
 |--------------|----------------------|----------|
 | Mount a disk at boot | systemd `.mount` unit | line in `/etc/fstab` |
 | Run something at boot | systemd service/timer | `/etc/rc.local`, cron `@reboot` in a reset file |
-| Keep the box from self-rebooting | remove UniFi + disable `uhwd`/`infctld` | try to pet a watchdog |
+| Run a service whose data is on `/volume` | `RequiresMountsFor=/volume/appdata/<app>` drop-in ([07](07-storage.md#running-your-own-services)) | hope it starts after the USB disk mounts |
+| Keep the box from self-rebooting | remove UniFi + disable `uhwd` | try to pet a watchdog |
+| Keep a top-level dir under `/volume` | nest it, or add a `.keep` file | leave it empty (deleted at boot) |
 | Persist SSH config | drop-in in `/etc/ssh/sshd_config.d/` (survives) + verify after a reboot | edit main `sshd_config` and hope |
 
 ## Verifying persistence

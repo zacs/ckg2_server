@@ -4,11 +4,13 @@
 #
 # What you get over cklcd: status LEDs, reset-button actions (short/long press
 # "bands", stealth mode), OLED burn-in mitigation, and an optional web dashboard
-# with a live event stream. See github.com/jnovack/cloudkey and docs/05-lcd.md.
+# with a live event stream. See github.com/jnovack/cloudkey and docs/03-lcd.md.
 #
-# It pulls the pre-built armhf binary from a pinned GitHub release (no
-# cross-compile toolchain needed) and the matching systemd unit + env template
-# from that same tag, so the unit always matches the binary.
+# It pulls the pre-built binary from a pinned GitHub release (no cross-compile
+# toolchain needed) and the matching systemd unit, env template and web-dashboard
+# page from that same tag, so they always match the binary. Upstream publishes
+# only a 32-bit ARM build; it runs on the arm64 userland of current firmware via
+# the SoC's AArch32 compat mode (verified upstream on Gen2 and Gen2 Plus).
 #
 # Only ONE process may drive /dev/fb0. This script stops+disables both the stock
 # `ck-ui` and this repo's `cklcd.service` before enabling `cloudkey.service`.
@@ -29,7 +31,8 @@ cd "$(dirname "$0")"
 
 REPO="jnovack/cloudkey"
 DEFAULT_TAG="v1.5.0"          # pinned for reproducibility; override with --tag
-ASSET="cloudkey-linux-arm"    # 32-bit armhf binary (matches the CloudKey userland)
+ASSET="cloudkey-linux-arm"    # static 32-bit ARM binary — the only build upstream publishes
+WEB_ROOT="/usr/share/cloudkey/website"   # the daemon's -web-root default
 
 # Known-good sha256 for the DEFAULT_TAG asset, verified 2026-07-28 by fetching
 # the release binary twice and confirming a stable hash. The install aborts if a
@@ -61,14 +64,20 @@ if [[ -z "$EXPECT_SHA" && "$TAG" == "$PINNED_TAG" ]]; then
 fi
 
 require_root
+assert_cloudkey
 command -v curl >/dev/null 2>&1 || { log "installing curl…"; apt-get install -y curl; }
 
 ARCH="$(dpkg --print-architecture 2>/dev/null || echo unknown)"
-[[ "$ARCH" == "armhf" ]] || warn "userland arch is '$ARCH', not armhf — the prebuilt $ASSET is 32-bit ARM; make sure your box can run it."
+case "$ARCH" in
+  armhf) ;;
+  arm64) log "userland is arm64; the 32-bit $ASSET runs via AArch32 compat (expected)." ;;
+  *) warn "userland arch is '$ARCH' — the prebuilt $ASSET is 32-bit ARM; make sure your box can run it." ;;
+esac
 
 BIN_URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
 SVC_URL="https://raw.githubusercontent.com/${REPO}/${TAG}/cloudkey.service"
 ENV_URL="https://raw.githubusercontent.com/${REPO}/${TAG}/cloudkey.env.example"
+WEB_URL="https://raw.githubusercontent.com/${REPO}/${TAG}/website/dashboard.html"
 
 log "About to install $REPO @ $TAG"
 log "  binary:  $BIN_URL"
@@ -114,6 +123,9 @@ fi
 log "Fetching matching service + env (tag $TAG)…"
 curl -fsSL -o "$TMP/cloudkey.service" "$SVC_URL" || die "could not fetch cloudkey.service"
 curl -fsSL -o "$TMP/cloudkey.env.example" "$ENV_URL" || die "could not fetch cloudkey.env.example"
+# The optional web dashboard (CLOUDKEY_HTTP_PORT) serves this page from
+# $WEB_ROOT; without it the dashboard has nothing to show. Non-fatal.
+curl -fsSL -o "$TMP/dashboard.html" "$WEB_URL" || warn "could not fetch dashboard.html — the optional web dashboard won't have a page."
 
 # Hand the panel over: stop everything else that drives /dev/fb0.
 for svc in ck-ui.service cklcd.service; do
@@ -127,6 +139,10 @@ log "Installing…"
 install -m 0755 "$TMP/cloudkey" /usr/local/bin/cloudkey
 install -m 0644 "$TMP/cloudkey.service" /etc/systemd/system/cloudkey.service
 [[ -f /etc/cloudkey.env ]] || install -m 0644 "$TMP/cloudkey.env.example" /etc/cloudkey.env
+if [[ -s "$TMP/dashboard.html" ]]; then
+  install -d -m 0755 "$WEB_ROOT"
+  install -m 0644 "$TMP/dashboard.html" "$WEB_ROOT/dashboard.html"
+fi
 
 systemctl daemon-reload
 systemctl enable --now cloudkey.service
@@ -138,7 +154,7 @@ echo
 if systemctl is-active --quiet cloudkey.service; then
   ok "cloudkey.service running — the panel should show its status screens."
   log "Configure LEDs / button / web dashboard in /etc/cloudkey.env, then: systemctl restart cloudkey"
-  log "Expect the correct panel resolution in the log above (≈160x60), not an error opening /dev/fb0."
+  log "Expect the panel resolution in the log above (160x60), not an error opening /dev/fb0."
 else
   err "cloudkey.service failed to start — see the log above."
   exit 1

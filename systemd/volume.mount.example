@@ -26,7 +26,9 @@ Description=Bulk storage drive at /volume
 What=/dev/disk/by-uuid/REPLACE-WITH-BLKID-UUID
 Where=/volume
 Type=ext4
-Options=defaults,noatime,nofail,x-systemd.device-timeout=30
+# nofail: a missing/slow disk must not block boot. (x-systemd.* options only
+# mean something in /etc/fstab, so they're not used here.)
+Options=defaults,noatime,nofail
 
 [Install]
 WantedBy=local-fs.target

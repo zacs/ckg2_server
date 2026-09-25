@@ -1,10 +1,11 @@
-# 05 — The front-panel LCD
+# 03 — The front-panel LCD
 
 ## What it actually is
 
-The little screen on the front is a **~160×64 monochrome OLED**, and — this is
-the good news — the kernel exposes it as a **standard Linux framebuffer at
-`/dev/fb0`**. There is **no microcontroller, no serial/I²C/SPI protocol, no
+The little screen on the front is a **160×60 OLED**, and — this is the good
+news — the kernel exposes it as a **standard Linux framebuffer at `/dev/fb0`**
+(driver `fb_sp8110`, over SPI; 16bpp **BGR565** by default, 320-byte stride,
+19200 bytes total). There is **no microcontroller, no serial/I²C/SPI protocol, no
 command framing** to reverse-engineer. You draw pixels into an mmap'd buffer,
 exactly like any fbdev panel. The single front button is a GPIO key on
 `/dev/input/event1` (`BTN_0`), not a touchscreen.
@@ -22,7 +23,10 @@ anything you write. **Stop it before you take the panel:**
 systemctl stop ck-ui      # or disable --now, which 40-install-lcd.sh does
 ```
 
-(If you removed the UniFi layer via `10-deunifi.sh`, `ck-ui` is already gone.)
+`10-deunifi.sh` deliberately leaves `ck-ui` installed **and running**: purging
+the package cascades into `cloudkey-apq8053-initramfs` and bricks the box, and
+until you pick a replacement it's what keeps the panel alive. The LCD
+installers below disable its *service*; the package stays, dormant.
 
 ## Two options (pick one)
 
@@ -51,11 +55,13 @@ sudo vi /etc/cloudkey.env
 sudo systemctl restart cloudkey
 ```
 
-The installer downloads a **pinned** prebuilt armhf release
-(`cloudkey-linux-arm`), checks it's actually an ARM ELF, and **verifies its
-sha256 against a known-good hash baked into the script** — the install aborts on
-any mismatch. It then pulls the matching `cloudkey.service` + env template and
-enables it. Config reference lives in the project's README and the annotated
+The installer downloads a **pinned** prebuilt release (`cloudkey-linux-arm` —
+32-bit ARM is the only build upstream publishes; it runs on the arm64 userland
+via the SoC's AArch32 compat mode), checks it's actually an ARM ELF, and
+**verifies its sha256 against a known-good hash baked into the script** — the
+install aborts on any mismatch. It then pulls the matching `cloudkey.service`,
+env template and web-dashboard page (to `/usr/share/cloudkey/website/`) from
+the same tag and enables the service. Config reference lives in the project's README and the annotated
 `/etc/cloudkey.env`.
 
 Pinned build (default `--tag v1.5.0`), verified 2026-07-28:
@@ -72,7 +78,8 @@ To move to a newer upstream release, verify its hash yourself and pass
 [`lcd/cklcd`](../lcd/cklcd) is a single, dependency-light Python 3 script. It
 reads the panel's real geometry and pixel format from the kernel at runtime
 (`FBIOGET_VSCREENINFO` / `FBIOGET_FSCREENINFO`) so it works whether the panel
-comes up as 16bpp RGB565 or a grayscale mode — you never hardcode 160×64.
+comes up as 16bpp BGR565 (stock), another truecolor mode, or a grayscale mode —
+you never hardcode 160×60.
 
 Dependencies: `python3-pil` (Pillow); `python3-qrcode` only for the `qr`
 subcommand. Both are in Debian.
@@ -113,8 +120,8 @@ whatever you want.
 - Opens `/dev/fb0`, `ioctl`s the var/fix screeninfo, and `mmap`s the buffer.
 - Renders text/QR/images into an in-memory Pillow RGB image sized to the panel.
 - Packs each pixel into the framebuffer's native format using the **kernel-
-  reported red/green/blue bitfield offsets and lengths**, so RGB565, RGB888, and
-  BGRA8888 all pack correctly without special-casing. If the framebuffer reports
+  reported red/green/blue bitfield offsets and lengths**, so BGR565 (stock),
+  RGB565, RGB888 and BGRA8888 all pack correctly without special-casing. If the framebuffer reports
   a grayscale mode (or no colour bitfields), it packs luminance instead.
 - Writes row by row into the mmap and `flush()`es. The panel is tiny (~19 KB), so
   pure-Python blitting is plenty fast for a status screen refreshing every few
