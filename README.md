@@ -233,6 +233,39 @@ SSH. More detail: [docs/06-accounts-and-access.md](docs/06-accounts-and-access.m
   firmware partitions (`sbl1`, `rpm`, `tz`, `devcfg`, `aboot`, `recovery`):
   they're what make the box recoverable. Nothing in this repo touches them.
 
+## Monitoring with Beszel (optional)
+
+The [Beszel](https://beszel.dev) agent works here, installed with Beszel's
+normal Linux installer. On its own it only sees the internal storage. This adds
+the 2.5" drive's capacity, I/O and SMART data:
+
+```bash
+sudo mkdir -p /etc/systemd/system/beszel-agent.service.d
+sudo tee /etc/systemd/system/beszel-agent.service.d/ckg2.conf >/dev/null <<'EOF'
+[Unit]
+# The agent looks for disks once, at startup: wait for the drive.
+After=volume.mount
+
+[Service]
+Environment="EXTRA_FILESYSTEMS=/volume__SSD"
+Environment="SMART_DEVICES=/dev/sda:sat"
+# SMART needs CAP_SYS_RAWIO, and this kernel can't give it to a non-root user.
+User=root
+CapabilityBoundingSet=CAP_SYS_RAWIO
+EOF
+sudo systemctl daemon-reload && sudo systemctl restart beszel-agent
+sudo journalctl -u beszel-agent -b --no-pager | grep -iE 'detected disk|smart'
+```
+
+- The last command should show `Detected disk name=SSD … mount=/volume`. SMART
+  data shows up on the system page after a few minutes.
+- `__SSD` is the name shown in Beszel; change it to anything you like.
+- `:sat` is how SMART gets through the drive's USB bridge. Test it with
+  `sudo smartctl -d sat -H /dev/sda`. If that fails, leave out the
+  `SMART_DEVICES`, `User` and `CapabilityBoundingSet` lines.
+- Don't use `AmbientCapabilities=` from Beszel's SMART guide: the 3.18 kernel
+  doesn't support it, and the agent won't start.
+
 ## What's in this repo
 
 | Script | What it does |
