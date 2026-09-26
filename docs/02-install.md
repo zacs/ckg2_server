@@ -16,10 +16,10 @@ and keeping the Debian underneath.
 - **You remove:** UniFi Network and Protect, MongoDB and PostgreSQL, the UniFi
   OS agents, and the watchdog and auto-updater behind the reboots.
 
-The trade-off: you stay on the old 3.18 kernel. Every peripheral works, but it
-rules out Docker and other containers, so services run directly on the OS
-([07-storage.md](07-storage.md#running-your-own-services)). It's also why you
-update Debian by updating the firmware
+The trade-off: you stay on the old 3.18 kernel. Every peripheral works, but
+Docker is limited to host networking and its slower `vfs` storage
+([08-docker.md](08-docker.md)). It's also why you update Debian by updating the
+firmware
 ([not by dist-upgrading](#why-not-dist-upgrade-by-hand)).
 
 ## Step by step

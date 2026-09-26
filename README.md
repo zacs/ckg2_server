@@ -197,8 +197,8 @@ SSH. More detail: [docs/06-accounts-and-access.md](docs/06-accounts-and-access.m
 
 ## Using the server
 
-- **Install software** with `sudo apt install …` or an app's own Linux
-  installer. Docker doesn't work: the 3.18 kernel is too old.
+- **Install software** with `sudo apt install …`, an app's own Linux
+  installer, or [Docker](#docker-optional) (host networking only).
 - **Keep app data on the drive**, under `/volume/appdata/<app>`, and make the
   app's service wait for the drive at boot. How: [docs/07-storage.md](docs/07-storage.md#running-your-own-services).
 - **Security updates** for Debian 13 install automatically.
@@ -232,6 +232,41 @@ SSH. More detail: [docs/06-accounts-and-access.md](docs/06-accounts-and-access.m
 - Recovery Mode lives in its own partition. Never write to the Qualcomm
   firmware partitions (`sbl1`, `rpm`, `tz`, `devcfg`, `aboot`, `recovery`):
   they're what make the box recoverable. Nothing in this repo touches them.
+
+## Docker (optional)
+
+Docker works, with two limits from the old kernel: containers must use **host
+networking**, and images take more disk space than usual. Why, and how to undo
+it: [docs/08-docker.md](docs/08-docker.md).
+
+```bash
+# Docker's firewall rules need iptables' "legacy" mode on this kernel
+sudo apt-get install -y iptables
+sudo update-alternatives --set iptables /usr/sbin/iptables-legacy
+sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+
+# Settings for Docker's first start: data on the drive, and the storage driver this kernel supports
+sudo mkdir -p /etc/docker /volume/docker /etc/systemd/system/docker.service.d
+sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
+{
+  "data-root": "/volume/docker",
+  "storage-driver": "vfs",
+  "log-opts": { "max-size": "10m", "max-file": "3" }
+}
+EOF
+printf '[Unit]\nRequiresMountsFor=/volume/docker\n' | sudo tee /etc/systemd/system/docker.service.d/ckg2.conf >/dev/null
+
+# Install, and let your user run docker without sudo (log out and back in after)
+sudo apt-get install -y --no-install-recommends docker.io docker-cli docker-compose
+sudo usermod -aG docker <user>
+```
+
+Then check it: `docker run --rm --network host hello-world`.
+
+- **Always use host networking:** `--network host` with `docker run`, and
+  `network_mode: host` (with no `ports:`) for every service in Compose. Without
+  it, containers fail with `route for the gateway … could not be found`.
+- **Keep app data on the drive**, in bind mounts under `/volume/appdata/<app>`.
 
 ## Monitoring with Beszel (optional)
 
@@ -282,7 +317,8 @@ sudo journalctl -u beszel-agent -b --no-pager | grep -iE 'detected disk|smart'
 Background reading in [`docs/`](docs): [hardware](docs/01-hardware.md),
 [install details](docs/02-install.md), [front panel](docs/03-lcd.md),
 [recovery](docs/04-recovery.md), [reboots and persistence](docs/05-watchdog-and-persistence.md),
-[accounts and SSH](docs/06-accounts-and-access.md), [storage and running services](docs/07-storage.md).
+[accounts and SSH](docs/06-accounts-and-access.md), [storage and running services](docs/07-storage.md),
+[Docker](docs/08-docker.md).
 
 ## Credits
 

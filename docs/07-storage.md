@@ -17,7 +17,7 @@ scripts underneath.
   no native SATA on this box), formatted and mounted by
   [`30-mount-storage.sh`](../scripts/30-mount-storage.sh).
 - **Run services directly on the OS** (apt packages or the app's own Linux
-  installer) — no containers; see [below](#running-your-own-services) for why.
+  installer), or in Docker with host networking ([08-docker.md](08-docker.md)).
   Keep each service's data under `/volume/appdata/<app>` and make the service
   wait for the disk.
 - **Optionally rehome `/home`, `/srv`, and `/var/log` onto the SATA disk** with
@@ -76,14 +76,14 @@ them, or give them a `.keep` file.
 
 ## Running your own services
 
-**Why not containers.** The stock 3.18 vendor kernel predates overlay2, the
-storage layer modern Docker is built on. [jnovack's runbook](https://github.com/jnovack/cloudkey)
-tried Docker on real Gen2/Gen2+ hardware and gave up, and nobody has shown it
-working here since. So install what you need directly: `apt install` it, or use
-the app's own Linux installer. On current firmware the userland is **arm64**,
-which nearly everything ships for.
+Install what you need directly (`apt install` it, or use the app's own Linux
+installer), or run it in Docker with host networking: see
+[08-docker.md](08-docker.md), which also covers data and boot order for
+containers. On current firmware the userland is **arm64**, which nearly
+everything ships for.
 
-For each service, three things (plus one if you turned the firewall on):
+For each service installed directly, three things (plus one if you turned the
+firewall on):
 
 1. **Put its data on the disk.** Point the app's data/config directory at
    `/volume/appdata/<app>` (usually a setting, a command-line flag, or the
