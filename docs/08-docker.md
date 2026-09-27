@@ -118,6 +118,12 @@ The README's commands, in order:
    (from the drive), and a container started before it would bind-mount the
    old, hidden `/home` on the eMMC. Without step 8, `/home` is a plain folder and
    the setting does nothing.
+
+   Add every other folder you bind-mount from, such as `/volume/stacks` or a NAS
+   share at `/mnt/media`. systemd works out which mount holds each one and waits
+   for it, so a folder that's already covered does no harm. If
+   `findmnt -no SOURCE -T <folder>` prints `overlayfs-root`, that folder is on
+   the eMMC: listing it won't move it, so move it to the drive.
 4. **Debian's packages** (`docker.io`, `docker-cli`, `docker-compose`), so
    Docker gets Debian's security updates with everything else. On Debian 13 the
    `docker` command is in its own package, `docker-cli`, which `docker.io` only

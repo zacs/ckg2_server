@@ -245,7 +245,8 @@ sudo apt-get install -y iptables
 sudo update-alternatives --set iptables /usr/sbin/iptables-legacy
 sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
 
-# Settings for Docker's first start: data on the drive, and the storage driver this kernel supports
+# Settings for Docker's first start: data on the drive, and the storage driver this kernel supports.
+# RequiresMountsFor= lists what Docker waits for at boot: add the folders you bind-mount into containers.
 sudo mkdir -p /etc/docker /volume/docker /etc/systemd/system/docker.service.d
 sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
 {
@@ -266,8 +267,13 @@ Then check it: `docker run --rm --network host hello-world`.
 - **Always use host networking:** `--network host` with `docker run`, and
   `network_mode: host` (with no `ports:`) for every service in Compose. Without
   it, containers fail with `route for the gateway … could not be found`.
-- **Keep app data on the drive:** bind mounts under `/volume/appdata/<app>`,
-  or in your home folder (on the drive after step 8).
+- **Keep bind-mounted folders on the drive, and list them.** Wherever you keep
+  them, add their top folder to the `RequiresMountsFor=` line (space-separated)
+  so Docker waits for it at boot. Listing a folder that's already covered does
+  no harm. To check where a folder lives: `findmnt -no SOURCE -T <folder>`
+  prints `/dev/sda…` for the drive, and `overlayfs-root` for the eMMC (move it).
+  To change the line later, rerun that `printf` with your folders, then
+  `sudo systemctl daemon-reload`.
 
 ## Monitoring with Beszel (optional)
 
