@@ -7,7 +7,9 @@ this page explains them.
 
 Tested on a Gen2 Plus with firmware 6.0.10 (Debian 13, kernel
 `3.18.44-ui-qcom`) and Debian's own Docker packages (Docker 26.1.5,
-containerd 1.7.24, runc 1.1.15).
+containerd 1.7.24, runc 1.1.15). That included a reboot: Docker waited for the
+drive, a `--restart unless-stopped` container came back on its own, and nothing
+landed in `/var/lib/docker` on the eMMC.
 
 | | |
 |---|---|
