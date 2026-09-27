@@ -112,9 +112,12 @@ The README's commands, in order:
      which has only about 6 GB writable.
    - `storage-driver: vfs` (see above).
    - `log-opts` caps each container's log at 3 × 10 MB.
-3. **`RequiresMountsFor=/volume/docker`** on `docker.service`: if the drive
-   doesn't mount, Docker doesn't start, instead of running on an empty folder on
-   the eMMC.
+3. **`RequiresMountsFor=/volume/docker /home`** on `docker.service`: if the
+   drive doesn't mount, Docker doesn't start, instead of running on an empty
+   folder on the eMMC. `/home` is there because after step 8 it's its own mount
+   (from the drive), and a container started before it would bind-mount the
+   old, hidden `/home` on the eMMC. Without step 8, `/home` is a plain folder and
+   the setting does nothing.
 4. **Debian's packages** (`docker.io`, `docker-cli`, `docker-compose`), so
    Docker gets Debian's security updates with everything else. On Debian 13 the
    `docker` command is in its own package, `docker-cli`, which `docker.io` only
@@ -122,8 +125,10 @@ The README's commands, in order:
 5. **The `docker` group** lets your user run `docker` without `sudo`. Anyone in
    it can control the whole box, the same as with `sudo`.
 
-Keep app data in bind mounts under `/volume/appdata/<app>`, as in the example
-above.
+Keep app data in bind mounts on the drive: under `/volume/appdata/<app>`, as
+in the example above, or in your home folder (on the drive after step 8). The
+eMMC backups from README steps 2 and 12 don't include either, so back them up
+separately.
 
 If you use Beszel, restart its agent after installing Docker
 (`sudo systemctl restart beszel-agent`) so it shows your containers.

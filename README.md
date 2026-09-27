@@ -254,7 +254,7 @@ sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
   "log-opts": { "max-size": "10m", "max-file": "3" }
 }
 EOF
-printf '[Unit]\nRequiresMountsFor=/volume/docker\n' | sudo tee /etc/systemd/system/docker.service.d/ckg2.conf >/dev/null
+printf '[Unit]\nRequiresMountsFor=/volume/docker /home\n' | sudo tee /etc/systemd/system/docker.service.d/ckg2.conf >/dev/null
 
 # Install, and let your user run docker without sudo (log out and back in after)
 sudo apt-get install -y --no-install-recommends docker.io docker-cli docker-compose
@@ -266,7 +266,8 @@ Then check it: `docker run --rm --network host hello-world`.
 - **Always use host networking:** `--network host` with `docker run`, and
   `network_mode: host` (with no `ports:`) for every service in Compose. Without
   it, containers fail with `route for the gateway … could not be found`.
-- **Keep app data on the drive**, in bind mounts under `/volume/appdata/<app>`.
+- **Keep app data on the drive:** bind mounts under `/volume/appdata/<app>`,
+  or in your home folder (on the drive after step 8).
 
 ## Monitoring with Beszel (optional)
 
