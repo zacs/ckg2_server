@@ -197,8 +197,8 @@ SSH. More detail: [docs/06-accounts-and-access.md](docs/06-accounts-and-access.m
 
 ## Using the server
 
-- **Install software** with `sudo apt install …` or an app's own Linux
-  installer. Docker doesn't work: the 3.18 kernel is too old.
+- **Install software** with `sudo apt install …`, an app's own Linux
+  installer, or [Docker](#docker-optional) (host networking only).
 - **Keep app data on the drive**, under `/volume/appdata/<app>`, and make the
   app's service wait for the drive at boot. How: [docs/07-storage.md](docs/07-storage.md#running-your-own-services).
 - **Security updates** for Debian 13 install automatically.
@@ -233,6 +233,81 @@ SSH. More detail: [docs/06-accounts-and-access.md](docs/06-accounts-and-access.m
   firmware partitions (`sbl1`, `rpm`, `tz`, `devcfg`, `aboot`, `recovery`):
   they're what make the box recoverable. Nothing in this repo touches them.
 
+## Docker (optional)
+
+Docker works, with two limits from the old kernel: containers must use **host
+networking**, and images take more disk space than usual. Why, and how to undo
+it: [docs/08-docker.md](docs/08-docker.md).
+
+```bash
+# Docker's firewall rules need iptables' "legacy" mode on this kernel
+sudo apt-get install -y iptables
+sudo update-alternatives --set iptables /usr/sbin/iptables-legacy
+sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+
+# Settings for Docker's first start: data on the drive, and the storage driver this kernel supports.
+# RequiresMountsFor= lists what Docker waits for at boot: add the folders you bind-mount into containers.
+sudo mkdir -p /etc/docker /volume/docker /etc/systemd/system/docker.service.d
+sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
+{
+  "data-root": "/volume/docker",
+  "storage-driver": "vfs",
+  "log-opts": { "max-size": "10m", "max-file": "3" }
+}
+EOF
+printf '[Unit]\nRequiresMountsFor=/volume/docker /home\n' | sudo tee /etc/systemd/system/docker.service.d/ckg2.conf >/dev/null
+
+# Install, and let your user run docker without sudo (log out and back in after)
+sudo apt-get install -y --no-install-recommends docker.io docker-cli docker-compose
+sudo usermod -aG docker <user>
+```
+
+Then check it: `docker run --rm --network host hello-world`.
+
+- **Always use host networking:** `--network host` with `docker run`, and
+  `network_mode: host` (with no `ports:`) for every service in Compose. Without
+  it, containers fail with `route for the gateway … could not be found`.
+- **Keep bind-mounted folders on the drive, and list them.** Wherever you keep
+  them, add their top folder to the `RequiresMountsFor=` line (space-separated)
+  so Docker waits for it at boot. Listing a folder that's already covered does
+  no harm. To check where a folder lives: `findmnt -no SOURCE -T <folder>`
+  prints `/dev/sda…` for the drive, and `overlayfs-root` for the eMMC (move it).
+  To change the line later, rerun that `printf` with your folders, then
+  `sudo systemctl daemon-reload`.
+
+## Monitoring with Beszel (optional)
+
+The [Beszel](https://beszel.dev) agent works here, installed with Beszel's
+normal Linux installer. On its own it only sees the internal storage. This adds
+the 2.5" drive's capacity, I/O and SMART data:
+
+```bash
+sudo mkdir -p /etc/systemd/system/beszel-agent.service.d
+sudo tee /etc/systemd/system/beszel-agent.service.d/ckg2.conf >/dev/null <<'EOF'
+[Unit]
+# The agent looks for disks once, at startup: wait for the drive.
+After=volume.mount
+
+[Service]
+Environment="EXTRA_FILESYSTEMS=/volume__SSD"
+Environment="SMART_DEVICES=/dev/sda:sat"
+# SMART needs CAP_SYS_RAWIO, and this kernel can't give it to a non-root user.
+User=root
+CapabilityBoundingSet=CAP_SYS_RAWIO
+EOF
+sudo systemctl daemon-reload && sudo systemctl restart beszel-agent
+sudo journalctl -u beszel-agent -b --no-pager | grep -iE 'detected disk|smart'
+```
+
+- The last command should show `Detected disk name=SSD … mount=/volume`. SMART
+  data shows up on the system page after a few minutes.
+- `__SSD` is the name shown in Beszel; change it to anything you like.
+- `:sat` is how SMART gets through the drive's USB bridge. Test it with
+  `sudo smartctl -d sat -H /dev/sda`. If that fails, leave out the
+  `SMART_DEVICES`, `User` and `CapabilityBoundingSet` lines.
+- Don't use `AmbientCapabilities=` from Beszel's SMART guide: the 3.18 kernel
+  doesn't support it, and the agent won't start.
+
 ## What's in this repo
 
 | Script | What it does |
@@ -249,7 +324,8 @@ SSH. More detail: [docs/06-accounts-and-access.md](docs/06-accounts-and-access.m
 Background reading in [`docs/`](docs): [hardware](docs/01-hardware.md),
 [install details](docs/02-install.md), [front panel](docs/03-lcd.md),
 [recovery](docs/04-recovery.md), [reboots and persistence](docs/05-watchdog-and-persistence.md),
-[accounts and SSH](docs/06-accounts-and-access.md), [storage and running services](docs/07-storage.md).
+[accounts and SSH](docs/06-accounts-and-access.md), [storage and running services](docs/07-storage.md),
+[Docker](docs/08-docker.md).
 
 ## Credits
 
