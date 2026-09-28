@@ -1,4 +1,4 @@
-# ckg2_server — turn a UniFi CloudKey Gen2 into a small Linux server
+# ckg2_server: UniFi CloudKey Gen2 → Linux server
 
 Turn a **UniFi CloudKey Gen2 Plus** (`UCK-G2-PLUS`) or **Gen2** (`UCK-G2`) into
 a quiet, PoE-powered Debian server. When you're done you have:
@@ -7,17 +7,24 @@ a quiet, PoE-powered Debian server. When you're done you have:
 - the **2.5" drive** formatted and mounted at `/volume` for your data
 - **automatic security updates**, time sync, and SSH key login
 - the **front-panel screen** showing status (optional)
+- working Docker (limited to `network_mode: host`)
 
-No case opening and no serial cable: everything happens over SSH.
+No case opening. Everything happens over SSH.
 
 ## Before you start
 
+You'll need: 
+
 - A CloudKey **Gen2 Plus** or **Gen2**. The drive steps need the Plus (the
-  plain Gen2 has no drive bay).
+  plain Gen2 has no drive bay). 
 - SSH turned on in the UniFi OS settings, and its root password.
-- A computer on the same network with a few GB free for a backup.
+- A computer on the same network with ~26 GB free for a backup.
+
+### Warnings
+
 - **The 2.5" drive gets erased.** Copy off anything you want to keep, such as
   old UniFi Protect recordings.
+- If you use a plain Gen2 it's going to hammer the eMMC, which I suspect would be bad. 
 - Skim [If something goes wrong](#if-something-goes-wrong) first.
 
 Commands marked **(workstation)** run on your computer. Everything else runs on
